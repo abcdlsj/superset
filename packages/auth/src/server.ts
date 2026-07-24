@@ -203,6 +203,7 @@ export const auth = betterAuth({
 					try {
 						await resend.emails.send({
 							from: "Superset <noreply@superset.sh>",
+							replyTo: "founders@superset.sh",
 							to: user.email,
 							subject: "Welcome to Superset",
 							react: WelcomeEmail({ userName: user.name }),
