@@ -1,120 +1,239 @@
-import { Heading, Hr, Section, Text } from "@react-email/components";
-import { Button, StandardLayout } from "../components";
+import {
+	Body,
+	Button,
+	Container,
+	Head,
+	Heading,
+	Html,
+	Img,
+	Preview,
+	Section,
+	Text,
+} from "@react-email/components";
+import { Tailwind } from "@react-email/tailwind";
+import { Footer } from "../components/layout/StandardLayout/components/Footer";
+import { env } from "../lib/env";
 
 const utm = (content: string) =>
 	`?utm_source=email&utm_medium=lifecycle&utm_campaign=welcome&utm_content=${content}`;
+
+const DOWNLOAD = "https://superset.sh/download";
 
 interface WelcomeEmailProps {
 	userName?: string;
 }
 
-export function WelcomeEmail({ userName = "there" }: WelcomeEmailProps) {
+export function WelcomeEmail({ userName: _userName }: WelcomeEmailProps = {}) {
 	return (
-		<StandardLayout preview="Your command center for coding agents — let's get you set up.">
-			<Heading className="m-0 mb-2 font-semibold text-[28px] text-foreground leading-[1.3]">
-				Welcome to Superset, {userName}
-			</Heading>
-			<Text className="m-0 mb-6 text-[18px] text-muted leading-[26px]">
-				Your command center for coding agents.
-			</Text>
-
-			<Text className="m-0 mb-4 text-[16px] text-foreground leading-[24px]">
-				Imagine shipping with a team of agents that:
-			</Text>
-			<Text className="m-0 mb-2 text-[16px] text-foreground leading-[24px]">
-				&bull;&nbsp;&nbsp;works in parallel, each in its own isolated workspace
-			</Text>
-			<Text className="m-0 mb-2 text-[16px] text-foreground leading-[24px]">
-				&bull;&nbsp;&nbsp;keeps every change on its own branch, ready to review
-			</Text>
-			<Text className="m-0 mb-4 text-[16px] text-foreground leading-[24px]">
-				&bull;&nbsp;&nbsp;picks up tasks and runs while you focus elsewhere
-			</Text>
-			<Text className="m-0 mb-6 text-[16px] text-foreground leading-[24px]">
-				That&apos;s Superset.
-			</Text>
-
-			<Section className="mb-8">
-				<Button href={`https://superset.sh/download${utm("hero-cta")}`}>
-					Get the desktop app
-				</Button>
-			</Section>
-
-			<Hr className="mb-8 border-border" />
-
-			<Heading
-				as="h2"
-				className="m-0 mb-2 font-semibold text-[20px] text-foreground leading-[1.3]"
+		<Html>
+			<Head />
+			<Tailwind
+				config={{
+					theme: {
+						extend: {
+							colors: {
+								clay: "#CC785C",
+								background: "#F5F3EC",
+								band: "#EDEAE0",
+								card: "#EAE7DC",
+								foreground: "#1F1E1D",
+								muted: "#5E5D59",
+								border: "#DDD9CC",
+							},
+							fontFamily: {
+								serif: ["Georgia", "Times New Roman", "serif"],
+								sans: [
+									"-apple-system",
+									"BlinkMacSystemFont",
+									"Segoe UI",
+									"Helvetica",
+									"Arial",
+									"sans-serif",
+								],
+							},
+						},
+					},
+				}}
 			>
-				Three ways to start
-			</Heading>
-			<Text className="m-0 mb-6 text-[16px] text-muted leading-[24px]">
-				The fastest way in is to pick one thing you were going to do anyway —
-				and hand it to an agent.
-			</Text>
+				<Body className="m-0 bg-background font-serif">
+					<Preview>
+						Your command center for coding agents — let&apos;s get you set up.
+					</Preview>
+					<Container className="mx-auto max-w-[640px] bg-background">
+						<Section className="bg-clay py-5 text-center">
+							<Img
+								src={`${env.NEXT_PUBLIC_MARKETING_URL}/assets/emails/logo-full.png`}
+								alt="Superset"
+								width="150"
+								className="mx-auto"
+							/>
+						</Section>
 
-			<Section className="mb-5">
-				<Text className="m-0 mb-1 font-semibold text-[16px] text-foreground leading-[24px]">
-					Spin up a workspace
-				</Text>
-				<Text className="m-0 mb-1 text-[15px] text-muted leading-[22px]">
-					Every workspace is an isolated copy of your repo on its own branch —
-					agents never step on each other, or on you.
-				</Text>
-				<a
-					href={`https://superset.sh/download${utm("card-workspace")}`}
-					className="text-[15px] text-foreground underline"
-				>
-					Download Superset
-				</a>
-			</Section>
+						<Section className="px-10 pt-12">
+							<Heading className="m-0 mb-10 text-center font-normal font-serif text-[40px] text-foreground leading-[1.15]">
+								Welcome to Superset,
+								<br />
+								your coding agent command center
+							</Heading>
 
-			<Section className="mb-5">
-				<Text className="m-0 mb-1 font-semibold text-[16px] text-foreground leading-[24px]">
-					Run agents in parallel
-				</Text>
-				<Text className="m-0 mb-1 text-[15px] text-muted leading-[22px]">
-					Kick off Claude Code or Codex on separate tasks and watch them work
-					side by side.
-				</Text>
-				<a
-					href={`https://docs.superset.sh/providers${utm("card-agents")}`}
-					className="text-[15px] text-foreground underline"
-				>
-					See supported agents
-				</a>
-			</Section>
+							<Section className="mb-10 rounded-2xl bg-card p-6">
+								<Img
+									src={`${env.NEXT_PUBLIC_MARKETING_URL}/assets/emails/welcome-hero.png`}
+									alt="Superset running coding agents across parallel workspaces"
+									width="528"
+									className="w-full rounded-xl"
+								/>
+							</Section>
 
-			<Section className="mb-8">
-				<Text className="m-0 mb-1 font-semibold text-[16px] text-foreground leading-[24px]">
-					Plan with tasks
-				</Text>
-				<Text className="m-0 mb-1 text-[15px] text-muted leading-[22px]">
-					Turn your backlog into tasks, assign them to agents, and review the
-					results when they&apos;re done.
-				</Text>
-				<a
-					href={`https://docs.superset.sh${utm("card-tasks")}`}
-					className="text-[15px] text-foreground underline"
-				>
-					See how tasks work
-				</a>
-			</Section>
+							<Text className="m-0 mb-6 font-serif text-[18px] text-foreground leading-[28px]">
+								Welcome to Superset, your command center for coding agents —
+								ready to take on real work from your backlog.
+							</Text>
 
-			<Hr className="mb-8 border-border" />
+							<Text className="m-0 mb-4 font-bold font-serif text-[18px] text-foreground leading-[28px]">
+								Imagine shipping with a team of agents that:
+							</Text>
 
-			<Text className="m-0 mb-6 text-[16px] text-foreground leading-[24px]">
-				Questions, feedback, something broken? Just reply — a founder reads
-				every email.
-			</Text>
+							<ul className="m-0 mb-6 pl-6">
+								<li className="mb-2 font-serif text-[18px] text-foreground leading-[28px]">
+									works in parallel, each in its own isolated workspace
+								</li>
+								<li className="mb-2 font-serif text-[18px] text-foreground leading-[28px]">
+									keeps every change on its own branch, ready to review
+								</li>
+								<li className="font-serif text-[18px] text-foreground leading-[28px]">
+									picks up tasks and runs while you focus elsewhere
+								</li>
+							</ul>
 
-			<Button
-				href={`https://superset.sh/download${utm("footer-cta")}`}
-				variant="secondary"
-			>
-				Get Superset
-			</Button>
-		</StandardLayout>
+							<Text className="m-0 mb-10 font-serif text-[18px] text-foreground leading-[28px]">
+								That&apos;s Superset.
+							</Text>
+
+							<Section className="pb-14 text-center">
+								<Button
+									href={`${DOWNLOAD}${utm("hero-cta")}`}
+									className="rounded-full bg-foreground px-10 py-[14px] font-sans text-[17px] text-white no-underline"
+								>
+									Get the desktop app
+								</Button>
+							</Section>
+						</Section>
+
+						<Section className="bg-band px-10 pt-14 pb-4">
+							<Heading
+								as="h2"
+								className="m-0 mb-8 text-center font-normal font-serif text-[36px] text-foreground leading-[1.15]"
+							>
+								Point agents at real work
+							</Heading>
+
+							<Text className="m-0 mb-6 font-serif text-[18px] text-foreground leading-[28px]">
+								The easiest way to get started is to hand an agent one thing you
+								were already going to do this week.
+							</Text>
+
+							<Text className="m-0 mb-10 font-bold font-serif text-[18px] text-foreground leading-[28px]">
+								Here are a few simple ideas:
+							</Text>
+
+							<Heading
+								as="h3"
+								className="m-0 mb-3 font-normal font-serif text-[26px] text-foreground leading-[1.2]"
+							>
+								Clear a bug from your backlog
+							</Heading>
+							<Text className="m-0 mb-4 font-serif text-[18px] text-foreground leading-[28px]">
+								&ldquo;Take that flaky test and fix it in an isolated
+								workspace.&rdquo;
+							</Text>
+							<Text className="m-0 mb-12 font-serif text-[18px] leading-[28px]">
+								<a
+									href={`${DOWNLOAD}${utm("idea-bug")}`}
+									className="font-bold font-sans text-[16px] text-foreground underline"
+								>
+									Download Superset
+								</a>
+							</Text>
+
+							<Heading
+								as="h3"
+								className="m-0 mb-3 font-normal font-serif text-[26px] text-foreground leading-[1.2]"
+							>
+								Run two agents side by side
+							</Heading>
+							<Text className="m-0 mb-4 font-serif text-[18px] text-foreground leading-[28px]">
+								&ldquo;Have Claude Code refactor the API while Codex writes the
+								tests.&rdquo;
+							</Text>
+							<Text className="m-0 mb-12 font-serif text-[18px] leading-[28px]">
+								<a
+									href={`https://docs.superset.sh/providers${utm("idea-agents")}`}
+									className="font-bold font-sans text-[16px] text-foreground underline"
+								>
+									See supported agents
+								</a>
+							</Text>
+
+							<Heading
+								as="h3"
+								className="m-0 mb-3 font-normal font-serif text-[26px] text-foreground leading-[1.2]"
+							>
+								Turn your TODO list into tasks
+							</Heading>
+							<Text className="m-0 mb-4 font-serif text-[18px] text-foreground leading-[28px]">
+								&ldquo;Plan the work as tasks, dispatch an agent to each, review
+								the diffs.&rdquo;
+							</Text>
+							<Text className="m-0 mb-12 font-serif text-[18px] leading-[28px]">
+								<a
+									href={`https://docs.superset.sh${utm("idea-tasks")}`}
+									className="font-bold font-sans text-[16px] text-foreground underline"
+								>
+									See how tasks work
+								</a>
+							</Text>
+
+							<Section className="pb-14 text-center">
+								<Button
+									href={`${DOWNLOAD}${utm("mid-cta")}`}
+									className="rounded-full bg-foreground px-10 py-[14px] font-sans text-[17px] text-white no-underline"
+								>
+									Get the desktop app
+								</Button>
+							</Section>
+						</Section>
+
+						<Section className="px-10 pt-14">
+							<Heading
+								as="h3"
+								className="m-0 mb-4 font-normal font-serif text-[26px] text-foreground leading-[1.2]"
+							>
+								Why Superset is different
+							</Heading>
+							<Text className="m-0 mb-12 font-serif text-[18px] text-foreground leading-[28px]">
+								Agents are only useful when they can work like teammates.
+								Superset gives every agent an isolated copy of your repo on its
+								own branch — so they work in parallel, never step on each other,
+								and each change comes back as a reviewable diff.
+							</Text>
+
+							<Heading
+								as="h3"
+								className="m-0 mb-4 font-normal font-serif text-[26px] text-foreground leading-[1.2]"
+							>
+								Questions?
+							</Heading>
+							<Text className="m-0 mb-12 font-serif text-[18px] text-foreground leading-[28px]">
+								Just reply to this email — a founder reads every message.
+							</Text>
+						</Section>
+
+						<Footer />
+					</Container>
+				</Body>
+			</Tailwind>
+		</Html>
 	);
 }
 
