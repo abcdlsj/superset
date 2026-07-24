@@ -11,7 +11,6 @@ import {
 	Text,
 } from "@react-email/components";
 import { Tailwind } from "@react-email/tailwind";
-import { Footer } from "../components/layout/StandardLayout/components/Footer";
 import { env } from "../lib/env";
 
 const utm = (content: string) =>
@@ -73,7 +72,7 @@ export function WelcomeEmail({ userName: _userName }: WelcomeEmailProps = {}) {
 							<Heading className="m-0 mb-10 text-center font-normal font-serif text-[40px] text-foreground leading-[1.15]">
 								Welcome to Superset,
 								<br />
-								your coding agent command center
+								your agent command center
 							</Heading>
 
 							<Section className="mb-10 rounded-2xl bg-card p-6">
@@ -113,7 +112,7 @@ export function WelcomeEmail({ userName: _userName }: WelcomeEmailProps = {}) {
 							<Section className="pb-14 text-center">
 								<Button
 									href={`${DOWNLOAD}${utm("hero-cta")}`}
-									className="rounded-full bg-foreground px-10 py-[14px] font-sans text-[17px] text-white no-underline"
+									className="rounded-full bg-foreground px-12 py-[15px] font-sans text-[17px] text-white no-underline"
 								>
 									Get the desktop app
 								</Button>
@@ -197,7 +196,7 @@ export function WelcomeEmail({ userName: _userName }: WelcomeEmailProps = {}) {
 							<Section className="pb-14 text-center">
 								<Button
 									href={`${DOWNLOAD}${utm("mid-cta")}`}
-									className="rounded-full bg-foreground px-10 py-[14px] font-sans text-[17px] text-white no-underline"
+									className="rounded-full bg-foreground px-12 py-[15px] font-sans text-[17px] text-white no-underline"
 								>
 									Get the desktop app
 								</Button>
@@ -229,7 +228,74 @@ export function WelcomeEmail({ userName: _userName }: WelcomeEmailProps = {}) {
 							</Text>
 						</Section>
 
-						<Footer />
+						<Section className="px-10 pt-4 pb-12 text-center">
+							<Img
+								src={`${env.NEXT_PUBLIC_MARKETING_URL}/assets/emails/logo-full.png`}
+								alt="Superset"
+								width="130"
+								className="mx-auto mb-6"
+							/>
+							<Text className="m-0 mb-6">
+								<a
+									href="https://x.com/superset_sh"
+									className="mx-2 inline-block"
+								>
+									<Img
+										src={`${env.NEXT_PUBLIC_MARKETING_URL}/assets/emails/x.png`}
+										alt="X"
+										width="22"
+										height="22"
+									/>
+								</a>
+								<a
+									href="https://instagram.com/superset"
+									className="mx-2 inline-block"
+								>
+									<Img
+										src={`${env.NEXT_PUBLIC_MARKETING_URL}/assets/emails/instagram.png`}
+										alt="Instagram"
+										width="22"
+										height="22"
+									/>
+								</a>
+								<a
+									href="https://www.linkedin.com/company/superset-sh"
+									className="mx-2 inline-block"
+								>
+									<Img
+										src={`${env.NEXT_PUBLIC_MARKETING_URL}/assets/emails/linkedin.png`}
+										alt="LinkedIn"
+										width="22"
+										height="22"
+									/>
+								</a>
+							</Text>
+							<Text className="m-0 mb-2 font-sans text-[13px] text-muted leading-[20px]">
+								<a
+									href="https://superset.sh/privacy"
+									className="text-muted underline"
+								>
+									Privacy
+								</a>{" "}
+								&bull;{" "}
+								<a
+									href="https://superset.sh/terms"
+									className="text-muted underline"
+								>
+									Terms
+								</a>{" "}
+								&bull;{" "}
+								<a
+									href="https://superset.sh/contact"
+									className="text-muted underline"
+								>
+									Contact
+								</a>
+							</Text>
+							<Text className="m-0 font-sans text-[13px] text-muted leading-[20px]">
+								&copy; 2026 Superset. All rights reserved.
+							</Text>
+						</Section>
 					</Container>
 				</Body>
 			</Tailwind>
