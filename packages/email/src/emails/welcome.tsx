@@ -35,8 +35,8 @@ export function WelcomeEmail({ userName = "there" }: WelcomeEmailProps) {
 			</Text>
 
 			<Section className="mb-8">
-				<Button href={`https://app.superset.sh/onboarding${utm("hero-cta")}`}>
-					Create your first workspace
+				<Button href={`https://superset.sh/download${utm("hero-cta")}`}>
+					Get the desktop app
 				</Button>
 			</Section>
 
@@ -62,10 +62,10 @@ export function WelcomeEmail({ userName = "there" }: WelcomeEmailProps) {
 					agents never step on each other, or on you.
 				</Text>
 				<a
-					href={`https://app.superset.sh/onboarding${utm("card-workspace")}`}
+					href={`https://superset.sh/download${utm("card-workspace")}`}
 					className="text-[15px] text-foreground underline"
 				>
-					Create a workspace
+					Download Superset
 				</a>
 			</Section>
 
@@ -78,10 +78,10 @@ export function WelcomeEmail({ userName = "there" }: WelcomeEmailProps) {
 					side by side.
 				</Text>
 				<a
-					href={`https://app.superset.sh/onboarding${utm("card-agents")}`}
+					href={`https://docs.superset.sh/providers${utm("card-agents")}`}
 					className="text-[15px] text-foreground underline"
 				>
-					Start an agent
+					See supported agents
 				</a>
 			</Section>
 
@@ -94,7 +94,7 @@ export function WelcomeEmail({ userName = "there" }: WelcomeEmailProps) {
 					results when they&apos;re done.
 				</Text>
 				<a
-					href={`https://superset.sh/docs${utm("card-tasks")}`}
+					href={`https://docs.superset.sh${utm("card-tasks")}`}
 					className="text-[15px] text-foreground underline"
 				>
 					See how tasks work
@@ -109,10 +109,10 @@ export function WelcomeEmail({ userName = "there" }: WelcomeEmailProps) {
 			</Text>
 
 			<Button
-				href={`https://app.superset.sh/onboarding${utm("footer-cta")}`}
+				href={`https://superset.sh/download${utm("footer-cta")}`}
 				variant="secondary"
 			>
-				Open Superset
+				Get Superset
 			</Button>
 		</StandardLayout>
 	);
