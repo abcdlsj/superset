@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 const scheduledFor = new Date("2026-08-06T18:46:00.000Z");
 const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
@@ -7,6 +7,7 @@ const dispatchAutomation = mock(async () => ({
 	runId: "3166c37c-add6-4382-ad07-44c816edb03e",
 }));
 const updateValues: unknown[] = [];
+let failFinalization = false;
 
 let automation = {
 	id: automationId,
@@ -45,7 +46,13 @@ mock.module("@superset/db/client", () => ({
 		update: () => ({
 			set: (values: unknown) => {
 				updateValues.push(values);
-				return { where: async () => undefined };
+				return {
+					where: async () => {
+						if (failFinalization) {
+							throw new Error("finalization failed");
+						}
+					},
+				};
 			},
 		}),
 	},
@@ -83,6 +90,7 @@ describe("automations dispatch route", () => {
 			nextRunAt: scheduledFor,
 		};
 		updateValues.length = 0;
+		failFinalization = false;
 	});
 
 	test("dispatches a terminal occurrence and then disables it", async () => {
@@ -105,6 +113,27 @@ describe("automations dispatch route", () => {
 		});
 		expect(dispatchAutomation).toHaveBeenCalledTimes(1);
 		expect(updateValues).toEqual([{ enabled: false }]);
+	});
+
+	test("does not acknowledge when terminal finalization fails", async () => {
+		failFinalization = true;
+		const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(
+				POST(
+					request({
+						automationId,
+						scheduledFor: scheduledFor.toISOString(),
+						terminal: true,
+					}),
+					{ params },
+				),
+			).rejects.toThrow("finalization failed");
+			expect(dispatchAutomation).toHaveBeenCalledTimes(1);
+		} finally {
+			errorSpy.mockRestore();
+		}
 	});
 
 	test("does not dispatch an automation intentionally disabled by the user", async () => {
