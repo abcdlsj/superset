@@ -53,14 +53,25 @@ export async function POST(request: Request): Promise<Response> {
 		return Response.json({ enqueued: 0 });
 	}
 
+	const dueWithNext = due.map((automation) => ({
+		automation,
+		next: nextOccurrenceAfter({
+			rrule: automation.rrule,
+			dtstart: automation.dtstart,
+			timezone: automation.timezone,
+			after: automation.nextRunAt,
+		}),
+	}));
+
 	await qstash.batchJSON(
-		due.map((automation) => {
+		dueWithNext.map(({ automation, next }) => {
 			const scheduledFor = bucketToMinute(automation.nextRunAt);
 			return {
 				url: `${env.NEXT_PUBLIC_API_URL}/api/automations/dispatch/${automation.id}`,
 				body: {
 					automationId: automation.id,
 					scheduledFor: scheduledFor.toISOString(),
+					terminal: next === null,
 				},
 				deduplicationId: `${automation.id}_${scheduledFor.getTime()}`,
 				retries: 2,
@@ -70,13 +81,7 @@ export async function POST(request: Request): Promise<Response> {
 	);
 
 	const advanceResults = await Promise.allSettled(
-		due.map((automation) => {
-			const next = nextOccurrenceAfter({
-				rrule: automation.rrule,
-				dtstart: automation.dtstart,
-				timezone: automation.timezone,
-				after: automation.nextRunAt,
-			});
+		dueWithNext.map(({ automation, next }) => {
 			return dbWs
 				.update(automations)
 				.set(next ? { nextRunAt: next } : { enabled: false })

@@ -18,6 +18,10 @@ const receiver = new Receiver({
 const payloadSchema = z.object({
 	automationId: z.string().uuid(),
 	scheduledFor: z.string().datetime(),
+	// The evaluator disables an automation as soon as it enqueues its final
+	// occurrence. Keep that provenance in the signed message so this handler
+	// can distinguish recurrence exhaustion from a user-paused automation.
+	terminal: z.boolean().default(false),
 });
 
 export async function POST(
@@ -55,15 +59,30 @@ export async function POST(
 	if (!automation) {
 		return Response.json({ ok: true, skipped: "deleted" });
 	}
-	if (!automation.enabled) {
+
+	const scheduledFor = new Date(parsed.data.scheduledFor);
+	if (!automation.enabled && !parsed.data.terminal) {
 		return Response.json({ ok: true, skipped: "disabled" });
+	}
+	if (
+		parsed.data.terminal &&
+		bucketToMinute(automation.nextRunAt).getTime() !==
+			bucketToMinute(scheduledFor).getTime()
+	) {
+		return Response.json({ ok: true, skipped: "stale" });
 	}
 
 	const outcome = await dispatchAutomation({
 		automation,
-		scheduledFor: new Date(parsed.data.scheduledFor),
+		scheduledFor,
 		relayUrl: env.RELAY_URL,
 	});
 
 	return Response.json({ ok: true, outcome });
+}
+
+function bucketToMinute(date: Date): Date {
+	const copy = new Date(date.getTime());
+	copy.setUTCSeconds(0, 0);
+	return copy;
 }
