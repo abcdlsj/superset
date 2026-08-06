@@ -3,6 +3,7 @@ import { z } from "zod";
 import { publicProcedure, router } from "../..";
 import { getCurrentBranch } from "../workspaces/utils/git";
 import { getSimpleGitWithShellPath } from "../workspaces/utils/git-client";
+import { getRepoMergeSettings } from "../workspaces/utils/github";
 import {
 	isNoPullRequestFoundMessage,
 	isUpstreamMissingError,
@@ -300,6 +301,13 @@ export const createGitOperationsRouter = () => {
 					}
 				},
 			),
+
+		getMergeSettings: publicProcedure
+			.input(z.object({ worktreePath: z.string() }))
+			.query(async ({ input }) => {
+				assertRegisteredWorktree(input.worktreePath);
+				return getRepoMergeSettings(input.worktreePath);
+			}),
 
 		mergePR: publicProcedure
 			.input(

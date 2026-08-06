@@ -1,6 +1,20 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../../index";
 
+const REPOSITORY_MERGE_SETTINGS_QUERY = `
+	query($owner: String!, $name: String!) {
+		repository(owner: $owner, name: $name) {
+			viewerDefaultMergeMethod
+		}
+	}
+`;
+
+interface RepositoryMergeSettingsResult {
+	repository: {
+		viewerDefaultMergeMethod: string | null;
+	} | null;
+}
+
 export const githubRouter = router({
 	getPRStatus: protectedProcedure
 		.input(
@@ -80,7 +94,28 @@ export const githubRouter = router({
 				owner: input.owner,
 				repo: input.repo,
 			});
-			return data;
+
+			let viewerDefaultMergeMethod: string | null = null;
+			try {
+				const result = await octokit.graphql<RepositoryMergeSettingsResult>(
+					REPOSITORY_MERGE_SETTINGS_QUERY,
+					{
+						owner: input.owner,
+						name: input.repo,
+					},
+				);
+				viewerDefaultMergeMethod =
+					result.repository?.viewerDefaultMergeMethod ?? null;
+			} catch (error) {
+				// The REST settings are still useful when GraphQL does not expose
+				// the viewer default (for example, with an older token scope).
+				console.warn(
+					"[github.getRepo] Failed to fetch viewer default merge method:",
+					error,
+				);
+			}
+
+			return { ...data, viewerDefaultMergeMethod };
 		}),
 
 	listDeployments: protectedProcedure
