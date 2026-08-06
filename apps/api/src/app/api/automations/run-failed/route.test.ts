@@ -43,6 +43,7 @@ mock.module("@superset/db/schema", () => ({
 		automationId: "automationId",
 		organizationId: "organizationId",
 		scheduledFor: "scheduledFor",
+		status: "status",
 	},
 }));
 

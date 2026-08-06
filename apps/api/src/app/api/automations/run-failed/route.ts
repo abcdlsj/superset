@@ -105,6 +105,9 @@ export async function POST(request: Request): Promise<Response> {
 		.onConflictDoUpdate({
 			target: [automationRuns.automationId, automationRuns.scheduledFor],
 			set: { status: "dispatch_failed", error: errorText },
+			// A retry caused by terminal finalization failure can collide with an
+			// already completed or offline run; preserve that observable outcome.
+			setWhere: eq(automationRuns.status, "dispatching"),
 		});
 
 	if (

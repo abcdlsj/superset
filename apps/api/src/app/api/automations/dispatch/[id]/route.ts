@@ -81,13 +81,14 @@ export async function POST(
 		try {
 			await finalizeTerminalAutomation(automation.id, automation.nextRunAt);
 		} catch (error) {
-			// The dispatch outcome is already observable. Keep the message a 2xx
-			// so QStash does not turn a successful run into a failure on retry;
-			// the next evaluation or delivery can retry this state transition.
 			console.error(
 				"[automations/dispatch] failed to finalize terminal automation",
 				{ automationId: automation.id, error },
 			);
+			// The dispatcher already recorded the outcome. Return non-2xx so
+			// QStash retries this idempotent finalization before acknowledging the
+			// message; run-failed preserves any already-terminal run outcome.
+			throw error;
 		}
 	}
 
