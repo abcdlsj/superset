@@ -6,6 +6,7 @@ const dispatchAutomation = mock(async () => ({
 	status: "dispatched" as const,
 	runId: "3166c37c-add6-4382-ad07-44c816edb03e",
 }));
+const updateValues: unknown[] = [];
 
 let automation = {
 	id: automationId,
@@ -41,6 +42,12 @@ mock.module("@superset/db/client", () => ({
 				}),
 			}),
 		}),
+		update: () => ({
+			set: (values: unknown) => {
+				updateValues.push(values);
+				return { where: async () => undefined };
+			},
+		}),
 	},
 }));
 
@@ -75,11 +82,10 @@ describe("automations dispatch route", () => {
 			enabled: true,
 			nextRunAt: scheduledFor,
 		};
+		updateValues.length = 0;
 	});
 
-	test("dispatches a terminal occurrence after evaluate disables it", async () => {
-		automation.enabled = false;
-
+	test("dispatches a terminal occurrence and then disables it", async () => {
 		const response = await POST(
 			request({
 				automationId,
@@ -98,6 +104,7 @@ describe("automations dispatch route", () => {
 			},
 		});
 		expect(dispatchAutomation).toHaveBeenCalledTimes(1);
+		expect(updateValues).toEqual([{ enabled: false }]);
 	});
 
 	test("does not dispatch an automation intentionally disabled by the user", async () => {
@@ -115,6 +122,43 @@ describe("automations dispatch route", () => {
 		expect(await response.json()).toEqual({
 			ok: true,
 			skipped: "disabled",
+		});
+		expect(dispatchAutomation).not.toHaveBeenCalled();
+	});
+
+	test("does not dispatch a terminal message after a user pause", async () => {
+		automation.enabled = false;
+
+		const response = await POST(
+			request({
+				automationId,
+				scheduledFor: scheduledFor.toISOString(),
+				terminal: true,
+			}),
+			{ params },
+		);
+
+		expect(await response.json()).toEqual({
+			ok: true,
+			skipped: "disabled",
+		});
+		expect(dispatchAutomation).not.toHaveBeenCalled();
+	});
+
+	test("skips a stale terminal occurrence", async () => {
+		const response = await POST(
+			request({
+				automationId,
+				scheduledFor: new Date(scheduledFor.getTime() - 60_000).toISOString(),
+				terminal: true,
+			}),
+			{ params },
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			ok: true,
+			skipped: "stale",
 		});
 		expect(dispatchAutomation).not.toHaveBeenCalled();
 	});

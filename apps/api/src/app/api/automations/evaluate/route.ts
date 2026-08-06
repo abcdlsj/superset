@@ -82,9 +82,14 @@ export async function POST(request: Request): Promise<Response> {
 
 	const advanceResults = await Promise.allSettled(
 		dueWithNext.map(({ automation, next }) => {
+			// Leave the final occurrence enabled until its queued dispatch has
+			// either produced an outcome or the failure callback records delivery
+			// failure. That keeps a user pause distinguishable from exhaustion.
+			if (!next) return Promise.resolve();
+
 			return dbWs
 				.update(automations)
-				.set(next ? { nextRunAt: next } : { enabled: false })
+				.set({ nextRunAt: next })
 				.where(eq(automations.id, automation.id));
 		}),
 	);
