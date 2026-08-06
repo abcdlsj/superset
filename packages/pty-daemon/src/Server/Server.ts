@@ -16,6 +16,7 @@ import {
 import { adoptFromFd } from "../Pty/index.ts";
 import {
 	type ClientMessage,
+	type DaemonContextStatus,
 	encodeFrame,
 	FrameDecoder,
 	type HandoffMessage,
@@ -33,6 +34,7 @@ import {
 export interface ServerOptions {
 	socketPath: string;
 	daemonVersion: string;
+	contextStatus?: DaemonContextStatus;
 	bufferCap?: number;
 	outboundBufferCap?: number;
 	/** Pause producing PTYs when a subscriber buffers past this (flow control). */
@@ -68,11 +70,18 @@ export class Server {
 	private readonly store: SessionStore;
 	private readonly conns = new Set<ConnState>();
 	private readonly opts: ServerOptions;
+	private contextStatus: DaemonContextStatus = "unknown";
 
 	constructor(opts: ServerOptions) {
 		this.opts = opts;
+		this.contextStatus = opts.contextStatus ?? "unknown";
 		this.store = new SessionStore({ bufferCap: opts.bufferCap });
 		this.server = net.createServer((socket) => this.onConnection(socket));
+	}
+
+	/** Set after the socket binds so a blocking macOS probe cannot delay startup. */
+	setContextStatus(status: DaemonContextStatus): void {
+		this.contextStatus = status;
 	}
 
 	async listen(): Promise<void> {
@@ -424,6 +433,7 @@ export class Server {
 				protocol: negotiated,
 				daemonVersion: this.opts.daemonVersion,
 				daemonPid: process.pid,
+				contextStatus: this.contextStatus,
 			});
 			return;
 		}

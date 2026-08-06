@@ -18,6 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
 	type ClientMessage,
+	type DaemonContextStatus,
 	encodeFrame,
 	FrameDecoder,
 } from "@superset/pty-daemon/protocol";
@@ -77,6 +78,7 @@ interface FakeDaemonOptions {
 	hangUpAfterHello?: boolean;
 	respondWithWrongMessageFirst?: boolean;
 	silent?: boolean;
+	contextStatus?: DaemonContextStatus;
 }
 
 async function startFakeDaemon(opts: FakeDaemonOptions): Promise<{
@@ -122,6 +124,9 @@ async function startFakeDaemon(opts: FakeDaemonOptions): Promise<{
 							protocol: 1,
 							daemonVersion: opts.respondWithVersion,
 							daemonPid: opts.daemonPid,
+							...(opts.contextStatus
+								? { contextStatus: opts.contextStatus }
+								: {}),
 						}),
 					);
 					return;
@@ -367,6 +372,178 @@ describe("DaemonSupervisor.tryAdopt", () => {
 				loggedEvents.some((e) => e.event === "pty_daemon_adopt_rejected"),
 			).toBe(false);
 			expect(isProcessAliveForTest(childPid)).toBe(true);
+		} finally {
+			await fake.close();
+			killIfAlive(childPid);
+		}
+	});
+
+	test("does not signal a manifest pid when hello reports another pid", async () => {
+		const orgId = "org-manifest-pid-mismatch";
+		const manifestPid = spawnIdleChild();
+		const fake = await startFakeDaemon({
+			respondWithVersion: "0.2.8",
+			daemonPid: process.pid,
+			contextStatus: "degraded",
+		});
+		try {
+			writePtyDaemonManifest({
+				pid: manifestPid,
+				socketPath: fake.socketPath,
+				protocolVersions: [2],
+				startedAt: Date.now(),
+				organizationId: orgId,
+			});
+			const sup = new DaemonSupervisor({
+				scriptPath: "/nonexistent",
+				autoUpdate: false,
+			});
+
+			expect(await invokeTryAdopt(sup, orgId)).toBeNull();
+			expect(isProcessAliveForTest(manifestPid)).toBe(true);
+			expect(
+				loggedEvents.some(
+					(e) =>
+						e.event === "pty_daemon_manifest_stale" &&
+						e.props.reason === "manifest_pid_mismatch",
+				),
+			).toBe(true);
+		} finally {
+			await fake.close();
+			killIfAlive(manifestPid);
+		}
+	});
+
+	test("records a degraded context from the daemon hello", async () => {
+		const orgId = "org-degraded-context";
+		const childPid = spawnIdleChild();
+		const fake = await startFakeDaemon({
+			respondWithVersion: "0.2.8",
+			daemonPid: childPid,
+			contextStatus: "degraded",
+		});
+		try {
+			writePtyDaemonManifest({
+				pid: childPid,
+				socketPath: fake.socketPath,
+				protocolVersions: [2],
+				startedAt: Date.now(),
+				organizationId: orgId,
+			});
+			const sup = new DaemonSupervisor({
+				scriptPath: "/nonexistent",
+				autoUpdate: false,
+			});
+			const adopted = (await invokeTryAdopt(sup, orgId)) as {
+				contextStatus?: DaemonContextStatus;
+			} | null;
+			expect(adopted?.contextStatus).toBe("degraded");
+			expect(isProcessAliveForTest(childPid)).toBe(true);
+		} finally {
+			await fake.close();
+			killIfAlive(childPid);
+		}
+	});
+
+	test("fresh-spawns a degraded daemon when the host context is healthy", async () => {
+		const orgId = "org-degraded-respawn";
+		const childPid = spawnIdleChild();
+		const fake = await startFakeDaemon({
+			respondWithVersion: "0.2.8",
+			daemonPid: childPid,
+			contextStatus: "degraded",
+		});
+		try {
+			writePtyDaemonManifest({
+				pid: childPid,
+				socketPath: fake.socketPath,
+				protocolVersions: [2],
+				startedAt: Date.now(),
+				organizationId: orgId,
+			});
+			const sup = new DaemonSupervisor({
+				scriptPath: "/nonexistent",
+				contextProbe: () => "healthy",
+				autoUpdate: false,
+			});
+			const replacement = {
+				pid: process.pid,
+				socketPath: fake.socketPath,
+				startedAt: Date.now(),
+				runningVersion: "0.2.8",
+				expectedVersion: "0.2.8",
+				updatePending: false,
+				contextStatus: "healthy" as const,
+				unreachableSince: null,
+			};
+			(
+				sup as unknown as {
+					spawn: (id: string) => Promise<typeof replacement>;
+				}
+			).spawn = async () => replacement;
+
+			const started = await invokeStart(sup, orgId);
+			expect(started.pid).toBe(process.pid);
+			expect(isProcessAliveForTest(childPid)).toBe(false);
+			expect(
+				loggedEvents.some(
+					(e) =>
+						e.event === "pty_daemon_context_degraded_respawn" &&
+						e.props.contextStatus === "degraded",
+				),
+			).toBe(true);
+		} finally {
+			await fake.close();
+			killIfAlive(childPid);
+		}
+	});
+
+	test("fresh-spawns a legacy daemon when the host context is healthy", async () => {
+		const orgId = "org-legacy-context";
+		const childPid = spawnIdleChild();
+		const fake = await startFakeDaemon({
+			respondWithVersion: "0.2.7",
+			daemonPid: childPid,
+		});
+		try {
+			writePtyDaemonManifest({
+				pid: childPid,
+				socketPath: fake.socketPath,
+				protocolVersions: [2],
+				startedAt: Date.now(),
+				organizationId: orgId,
+			});
+			const sup = new DaemonSupervisor({
+				scriptPath: "/nonexistent",
+				contextProbe: () => "healthy",
+				autoUpdate: false,
+			});
+			const replacement = {
+				pid: process.pid,
+				socketPath: fake.socketPath,
+				startedAt: Date.now(),
+				runningVersion: "0.2.8",
+				expectedVersion: "0.2.8",
+				updatePending: false,
+				contextStatus: "healthy" as const,
+				unreachableSince: null,
+			};
+			(
+				sup as unknown as {
+					spawn: (id: string) => Promise<typeof replacement>;
+				}
+			).spawn = async () => replacement;
+
+			const started = await invokeStart(sup, orgId);
+			expect(started.pid).toBe(process.pid);
+			expect(isProcessAliveForTest(childPid)).toBe(false);
+			expect(
+				loggedEvents.some(
+					(e) =>
+						e.event === "pty_daemon_context_degraded_respawn" &&
+						e.props.contextStatus === "legacy",
+				),
+			).toBe(true);
 		} finally {
 			await fake.close();
 			killIfAlive(childPid);
@@ -922,6 +1099,23 @@ describe("DaemonSupervisor.update failure mode", () => {
 		await expect(sup.update("org-throw")).rejects.toThrow(/ECONNRESET/);
 		expect(getInstancePid(sup, "org-throw")).toBe(PREDECESSOR_PID);
 	});
+
+	test("does not hand off a daemon with an unverified legacy context", async () => {
+		const instance = {
+			...staleInstance("0.2.7"),
+			contextStatus: "legacy" as const,
+		};
+		seedDaemonInstance(sup, "org-legacy-update", instance);
+
+		const result = await invokeRunUpdate(sup, "org-legacy-update");
+
+		expect(result).toEqual({
+			ok: false,
+			reason:
+				"daemon context is not verified; use a fresh restart instead of handoff",
+		});
+		expect(getInstancePid(sup, "org-legacy-update")).toBe(instance.pid);
+	});
 });
 
 describe("DaemonSupervisor auto-update best effort", () => {
@@ -1282,6 +1476,32 @@ function invokeTryAdopt(
 			tryAdopt: (id: string) => Promise<unknown | null>;
 		}
 	).tryAdopt(organizationId);
+}
+
+function invokeStart(
+	sup: DaemonSupervisor,
+	organizationId: string,
+): Promise<{ pid: number }> {
+	return (
+		sup as unknown as {
+			start: (id: string) => Promise<{ pid: number }>;
+		}
+	).start(organizationId);
+}
+
+function invokeRunUpdate(
+	sup: DaemonSupervisor,
+	organizationId: string,
+): Promise<{ ok: true; successorPid: number } | { ok: false; reason: string }> {
+	return (
+		sup as unknown as {
+			runUpdate: (
+				id: string,
+			) => Promise<
+				{ ok: true; successorPid: number } | { ok: false; reason: string }
+			>;
+		}
+	).runUpdate(organizationId);
 }
 
 /** A live pid that is definitely not a pty-daemon. */

@@ -17,6 +17,7 @@
 
 import * as os from "node:os";
 import packageJson from "../package.json" with { type: "json" };
+import { probeDaemonContext } from "./context-probe.ts";
 import { drainPendingKills } from "./Pty/index.ts";
 import type { HandoffMessage } from "./protocol/index.ts";
 import { Server } from "./Server/index.ts";
@@ -79,6 +80,7 @@ async function runFresh(): Promise<void> {
 		bufferCap: args.bufferBytes,
 	});
 	await server.listen();
+	server.setContextStatus((await probeDaemonContext()).status);
 	process.stderr.write(
 		`[pty-daemon] listening on ${args.socket} (v${daemonVersion}, host=${os.hostname()})\n`,
 	);
@@ -182,6 +184,7 @@ async function runHandoffReceiver(): Promise<void> {
 	log(`predecessor disconnected, binding socket`);
 
 	await server.listenWithRetry();
+	server.setContextStatus((await probeDaemonContext()).status);
 	log(`bound and listening`);
 	process.stderr.write(
 		`[pty-daemon] (handoff successor) listening on ${socketPath} (v${daemonVersion}, host=${os.hostname()}, sessions=${snapshot.sessions.length})\n`,

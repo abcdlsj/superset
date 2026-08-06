@@ -37,6 +37,7 @@ import {
 	readSnapshot,
 	Server,
 } from "@superset/pty-daemon";
+import { probeDaemonContext } from "@superset/pty-daemon/context-probe";
 import type { HandoffMessage } from "@superset/pty-daemon/protocol";
 
 interface CliArgs {
@@ -85,6 +86,7 @@ async function runFresh(): Promise<void> {
 		bufferCap: args.bufferBytes,
 	});
 	await server.listen();
+	server.setContextStatus((await probeDaemonContext()).status);
 	process.stderr.write(
 		`[pty-daemon] listening on ${args.socket} (v${daemonVersion})\n`,
 	);
@@ -169,6 +171,7 @@ async function runHandoffReceiver(): Promise<void> {
 	log(`predecessor disconnected, binding socket`);
 
 	await server.listenWithRetry();
+	server.setContextStatus((await probeDaemonContext()).status);
 	log(`bound and listening`);
 
 	clearSnapshot(snapshotPath);

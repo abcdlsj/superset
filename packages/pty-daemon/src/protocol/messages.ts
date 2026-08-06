@@ -31,6 +31,8 @@ export interface HelloMessage {
 	clientVersion?: string;
 }
 
+export type DaemonContextStatus = "healthy" | "degraded" | "unknown";
+
 export interface HelloAckMessage {
 	type: "hello-ack";
 	protocol: number;
@@ -41,6 +43,11 @@ export interface HelloAckMessage {
 	 * missing or stale.
 	 */
 	daemonPid?: number;
+	/**
+	 * Health of the macOS user/bootstrap services inherited by PTY sessions.
+	 * Optional so supervisors can identify pre-context-health daemons as legacy.
+	 */
+	contextStatus?: DaemonContextStatus;
 }
 
 // ---------- Client -> Daemon ----------

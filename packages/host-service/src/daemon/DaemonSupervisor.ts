@@ -14,12 +14,14 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { probeDaemonContext } from "@superset/pty-daemon/context-probe";
 import {
 	isPositiveInteger,
 	signalProcessTreeAndGroups,
 } from "@superset/pty-daemon/process-tree";
 import {
 	CURRENT_PROTOCOL_VERSION,
+	type DaemonContextStatus,
 	encodeFrame,
 	FrameDecoder,
 	type ServerMessage,
@@ -38,6 +40,8 @@ import {
 	writePtyDaemonManifest,
 } from "./manifest.ts";
 
+type ObservedDaemonContextStatus = DaemonContextStatus | "legacy";
+
 interface DaemonInstance {
 	pid: number;
 	socketPath: string;
@@ -48,6 +52,10 @@ interface DaemonInstance {
 	expectedVersion: string;
 	/** True when running < expected. Probe failure does NOT set this. */
 	updatePending: boolean;
+	/** Context reported by the daemon; legacy means the field was absent. */
+	contextStatus?: ObservedDaemonContextStatus;
+	/** True only when the hello PID matched the PID we are allowed to signal. */
+	daemonPidVerified?: boolean;
 	/** Last failed background update attempt for this still-running daemon. */
 	autoUpdateFailure?: DaemonAutoUpdateFailure;
 	/**
@@ -68,6 +76,7 @@ export interface DaemonHealth {
 interface DaemonProbeResult {
 	daemonVersion: string;
 	daemonPid?: number;
+	contextStatus: ObservedDaemonContextStatus;
 }
 
 export interface DaemonAutoUpdateFailure {
@@ -177,6 +186,8 @@ export interface DaemonSupervisorOptions {
 	 * real handoff.
 	 */
 	autoUpdate?: boolean;
+	/** Test seam; production probes the host-service process directly. */
+	contextProbe?: () => DaemonContextStatus | Promise<DaemonContextStatus>;
 }
 
 export class DaemonSupervisor {
@@ -215,9 +226,55 @@ export class DaemonSupervisor {
 		string,
 		Promise<{ ok: true; successorPid: number } | { ok: false; reason: string }>
 	>();
+	/** Cached because a process's Mach bootstrap does not change underneath it. */
+	private hostContextStatusCache: DaemonContextStatus | null = null;
+	private hostContextStatusPromise: Promise<DaemonContextStatus> | null = null;
 
 	constructor(opts: DaemonSupervisorOptions) {
 		this.opts = opts;
+	}
+
+	private async hostContextStatus(): Promise<DaemonContextStatus> {
+		if (this.hostContextStatusCache !== null) {
+			return this.hostContextStatusCache;
+		}
+		if (this.hostContextStatusPromise === null) {
+			this.hostContextStatusPromise = (async () => {
+				try {
+					return this.opts.contextProbe
+						? await this.opts.contextProbe()
+						: (await probeDaemonContext()).status;
+				} catch {
+					return "unknown";
+				}
+			})();
+		}
+		this.hostContextStatusCache = await this.hostContextStatusPromise;
+		return this.hostContextStatusCache;
+	}
+
+	private async killAdoptedDaemon(
+		organizationId: string,
+		instance: DaemonInstance,
+	): Promise<void> {
+		// This is intentionally the destructive path: a daemon with a broken
+		// bootstrap context cannot be repaired by fd-handoff, and its existing
+		// shells are already unable to perform the operations that exposed this
+		// issue (user lookup, SSH, and trustd-backed TLS).
+		await terminateProcessTreeAndGroups(instance.pid, "SIGTERM");
+		removePtyDaemonManifest(organizationId);
+	}
+
+	private async shouldReplaceAdoptedDaemon(
+		instance: DaemonInstance,
+	): Promise<boolean> {
+		const legacyNeedsMigration =
+			instance.contextStatus === "legacy" && instance.updatePending;
+		return (
+			instance.daemonPidVerified === true &&
+			(instance.contextStatus === "degraded" || legacyNeedsMigration) &&
+			(await this.hostContextStatus()) === "healthy"
+		);
 	}
 
 	/**
@@ -299,6 +356,16 @@ export class DaemonSupervisor {
 		if (!instance) {
 			return { ok: false, reason: "no daemon running for this org" };
 		}
+		if (
+			instance.contextStatus === "degraded" ||
+			instance.contextStatus === "legacy"
+		) {
+			return {
+				ok: false,
+				reason:
+					"daemon context is not verified; use a fresh restart instead of handoff",
+			};
+		}
 
 		// Suppress crash-respawn for the predecessor's imminent exit. The
 		// predecessor was either spawned by us (child.on('exit') will fire)
@@ -373,10 +440,11 @@ export class DaemonSupervisor {
 			}
 		}
 
-		const probedVersion = await probeDaemonVersionWithRetry(
+		const successorProbe = await probeDaemonHelloWithRetry(
 			instance.socketPath,
 			HANDOFF_PROBE_TOTAL_TIMEOUT_MS,
 		);
+		const probedVersion = successorProbe?.daemonVersion ?? null;
 		const runningVersion = probedVersion ?? "unknown";
 
 		// Single capture so the in-memory instance and the manifest agree.
@@ -388,6 +456,7 @@ export class DaemonSupervisor {
 			runningVersion,
 			expectedVersion: EXPECTED_DAEMON_VERSION,
 			updatePending: isVersionUpdatePending(probedVersion),
+			contextStatus: successorProbe?.contextStatus ?? "unknown",
 			unreachableSince: probedVersion ? null : Date.now(),
 		};
 		this.instances.set(organizationId, successorInstance);
@@ -603,6 +672,7 @@ export class DaemonSupervisor {
 			return;
 		}
 		current.unreachableSince = null;
+		current.contextStatus = probe.contextStatus;
 		if (current.runningVersion === "unknown") {
 			current.runningVersion = probe.daemonVersion;
 			current.updatePending = isVersionUpdatePending(probe.daemonVersion);
@@ -789,7 +859,17 @@ export class DaemonSupervisor {
 			await this.killStaleDaemonForDev(organizationId);
 		}
 
-		const adopted = await this.tryAdopt(organizationId);
+		let adopted = await this.tryAdopt(organizationId);
+		if (adopted && (await this.shouldReplaceAdoptedDaemon(adopted))) {
+			logEvent("pty_daemon_context_degraded_respawn", {
+				organizationId,
+				pid: adopted.pid,
+				runningVersion: adopted.runningVersion,
+				contextStatus: adopted.contextStatus,
+			});
+			await this.killAdoptedDaemon(organizationId, adopted);
+			adopted = null;
+		}
 		if (adopted) {
 			this.instances.set(organizationId, adopted);
 			console.log(
@@ -802,6 +882,7 @@ export class DaemonSupervisor {
 				runningVersion: adopted.runningVersion,
 				expectedVersion: adopted.expectedVersion,
 				updatePending: adopted.updatePending,
+				contextStatus: adopted.contextStatus,
 			});
 			this.maybeFireUpdatePending(organizationId, adopted);
 			this.startAdoptedLivenessCheck(organizationId, adopted.pid);
@@ -873,6 +954,22 @@ export class DaemonSupervisor {
 			manifest.socketPath,
 			ADOPTION_PROBE_TOTAL_TIMEOUT_MS,
 		);
+		if (
+			probe?.daemonPid !== undefined &&
+			probe.daemonPid !== manifest.pid
+		) {
+			logEvent("pty_daemon_manifest_stale", {
+				organizationId,
+				pid: manifest.pid,
+				socketPath: manifest.socketPath,
+				reason: "manifest_pid_mismatch",
+				probedPid: probe.daemonPid,
+			});
+			removePtyDaemonManifest(organizationId);
+			return this.tryAdoptFromSocket(organizationId, expectedSocketPath, {
+				reason: "manifest_pid_mismatch",
+			});
+		}
 		if (!probe && !(await isSocketConnectable(manifest.socketPath, 1000))) {
 			// Nothing is even accepting on the socket. A live daemon keeps its
 			// listener no matter how overloaded it is, so this pid isn't our
@@ -898,6 +995,8 @@ export class DaemonSupervisor {
 			runningVersion,
 			expectedVersion: EXPECTED_DAEMON_VERSION,
 			updatePending: isVersionUpdatePending(probe?.daemonVersion ?? null),
+			contextStatus: probe?.contextStatus ?? "unknown",
+			daemonPidVerified: probe?.daemonPid === manifest.pid,
 			// Start the clock here when it didn't answer: the liveness poll
 			// clears it the moment it does.
 			unreachableSince: probe ? null : Date.now(),
@@ -962,6 +1061,8 @@ export class DaemonSupervisor {
 			runningVersion: probe.daemonVersion,
 			expectedVersion: EXPECTED_DAEMON_VERSION,
 			updatePending: isVersionUpdatePending(probe.daemonVersion),
+			contextStatus: probe.contextStatus,
+			daemonPidVerified: true,
 			unreachableSince: null,
 		};
 	}
@@ -1153,6 +1254,8 @@ export class DaemonSupervisor {
 			runningVersion: EXPECTED_DAEMON_VERSION,
 			expectedVersion: EXPECTED_DAEMON_VERSION,
 			updatePending: false,
+			contextStatus: await this.hostContextStatus(),
+			daemonPidVerified: true,
 			unreachableSince: null,
 		};
 		this.instances.set(organizationId, instance);
@@ -1325,16 +1428,6 @@ async function probeDaemonHelloWithRetry(
 	return null;
 }
 
-async function probeDaemonVersionWithRetry(
-	socketPath: string,
-	totalTimeoutMs: number,
-): Promise<string | null> {
-	return (
-		(await probeDaemonHelloWithRetry(socketPath, totalTimeoutMs))
-			?.daemonVersion ?? null
-	);
-}
-
 function terminatePidOnly(pid: number, signal: NodeJS.Signals): void {
 	if (!isPositiveInteger(pid)) return;
 	try {
@@ -1456,6 +1549,7 @@ function probeDaemonHello(
 						cleanup({
 							daemonVersion,
 							daemonPid: msg.daemonPid,
+							contextStatus: msg.contextStatus ?? "legacy",
 						});
 						return;
 					}

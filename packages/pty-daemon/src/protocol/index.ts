@@ -8,6 +8,7 @@ export type {
 	ClientMessage,
 	ClosedMessage,
 	CloseMessage,
+	DaemonContextStatus,
 	ErrorMessage,
 	ExitMessage,
 	HelloAckMessage,
