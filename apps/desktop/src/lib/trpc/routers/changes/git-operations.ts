@@ -319,6 +319,21 @@ export const createGitOperationsRouter = () => {
 			.mutation(
 				async ({ input }): Promise<{ success: boolean; mergedAt?: string }> => {
 					assertRegisteredWorktree(input.worktreePath);
+					const mergeSettings = await getRepoMergeSettings(input.worktreePath);
+					const methodDisabled =
+						(input.strategy === "merge" &&
+							mergeSettings?.allowMergeCommit === false) ||
+						(input.strategy === "squash" &&
+							mergeSettings?.allowSquashMerge === false) ||
+						(input.strategy === "rebase" &&
+							mergeSettings?.allowRebaseMerge === false);
+
+					if (methodDisabled) {
+						throw new TRPCError({
+							code: "BAD_REQUEST",
+							message: `Repository merge settings do not allow ${input.strategy} merges.`,
+						});
+					}
 
 					try {
 						return await mergePullRequest(input);
