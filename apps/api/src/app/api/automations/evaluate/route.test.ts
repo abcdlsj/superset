@@ -8,6 +8,7 @@ const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
 let dueAutomations: Array<{
 	id: string;
 	nextRunAt: Date;
+	updatedAt: Date;
 	rrule: string;
 	dtstart: Date;
 	timezone: string;
@@ -96,6 +97,7 @@ describe("automations evaluate route", () => {
 			{
 				id: automationId,
 				nextRunAt: terminalOccurrence,
+				updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 				rrule: "FREQ=DAILY;COUNT=1",
 				dtstart: terminalOccurrence,
 				timezone: "UTC",
@@ -115,8 +117,14 @@ describe("automations evaluate route", () => {
 				Math.floor(terminalOccurrence.getTime() / 60_000) * 60_000,
 			).toISOString(),
 			terminal: true,
+			terminalDispatchToken: "2026-08-06T18:00:00.001Z",
 		});
-		expect(updateValues).toEqual([]);
+		expect(updateValues).toEqual([
+			{
+				enabled: false,
+				updatedAt: new Date("2026-08-06T18:00:00.001Z"),
+			},
+		]);
 	});
 
 	test("keeps the existing non-terminal advance path", async () => {
@@ -124,6 +132,7 @@ describe("automations evaluate route", () => {
 			{
 				id: automationId,
 				nextRunAt: nonTerminalOccurrence,
+				updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 				rrule: "FREQ=DAILY",
 				dtstart: nonTerminalOccurrence,
 				timezone: "UTC",

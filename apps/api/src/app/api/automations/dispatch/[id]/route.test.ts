@@ -13,6 +13,7 @@ let automation = {
 	id: automationId,
 	enabled: true,
 	nextRunAt: scheduledFor,
+	updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 };
 
 mock.module("@/env", () => ({
@@ -63,6 +64,7 @@ mock.module("@superset/trpc/automation-dispatch", () => ({
 }));
 
 mock.module("drizzle-orm", () => ({
+	and: () => undefined,
 	eq: () => undefined,
 }));
 
@@ -88,6 +90,7 @@ describe("automations dispatch route", () => {
 			id: automationId,
 			enabled: true,
 			nextRunAt: scheduledFor,
+			updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 		};
 		updateValues.length = 0;
 		failFinalization = false;
@@ -155,6 +158,32 @@ describe("automations dispatch route", () => {
 		expect(dispatchAutomation).not.toHaveBeenCalled();
 	});
 
+	test("dispatches a terminal occurrence disabled by evaluate", async () => {
+		const terminalDispatchToken = "2026-08-06T18:00:00.001Z";
+		automation.enabled = false;
+		automation.updatedAt = new Date(terminalDispatchToken);
+
+		const response = await POST(
+			request({
+				automationId,
+				scheduledFor: scheduledFor.toISOString(),
+				terminal: true,
+				terminalDispatchToken,
+			}),
+			{ params },
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			ok: true,
+			outcome: {
+				status: "dispatched",
+				runId: "3166c37c-add6-4382-ad07-44c816edb03e",
+			},
+		});
+		expect(dispatchAutomation).toHaveBeenCalledTimes(1);
+	});
+
 	test("does not dispatch a terminal message after a user pause", async () => {
 		automation.enabled = false;
 
@@ -163,6 +192,7 @@ describe("automations dispatch route", () => {
 				automationId,
 				scheduledFor: scheduledFor.toISOString(),
 				terminal: true,
+				terminalDispatchToken: "2026-08-06T18:00:00.001Z",
 			}),
 			{ params },
 		);

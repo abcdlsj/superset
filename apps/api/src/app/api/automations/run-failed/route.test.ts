@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { beforeEach, expect, mock, test } from "bun:test";
 
 const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
 const terminalOccurrence = new Date("2026-08-06T18:46:30.000Z");
@@ -12,6 +12,11 @@ const automation = {
 	enabled: true,
 	nextRunAt: terminalOccurrence,
 };
+
+beforeEach(() => {
+	insertValues.length = 0;
+	updateValues.length = 0;
+});
 
 mock.module("@/env", () => ({
 	env: {

@@ -21,6 +21,7 @@ const payloadSchema = z.object({
 	// Keep terminal provenance in the signed message so this handler can
 	// finalize recurrence exhaustion after the dispatch attempt.
 	terminal: z.boolean().default(false),
+	terminalDispatchToken: z.string().datetime().optional(),
 });
 
 export async function POST(
@@ -61,7 +62,17 @@ export async function POST(
 
 	const scheduledFor = new Date(parsed.data.scheduledFor);
 	if (!automation.enabled) {
-		return Response.json({ ok: true, skipped: "disabled" });
+		// evaluate writes the signed token into updated_at when it disables a
+		// terminal recurrence. A later user update changes updated_at, so a
+		// paused automation cannot be mistaken for evaluator-owned exhaustion.
+		const evaluatorDisabled =
+			parsed.data.terminal &&
+			parsed.data.terminalDispatchToken !== undefined &&
+			automation.updatedAt.getTime() ===
+				new Date(parsed.data.terminalDispatchToken).getTime();
+		if (!evaluatorDisabled) {
+			return Response.json({ ok: true, skipped: "disabled" });
+		}
 	}
 	if (
 		parsed.data.terminal &&

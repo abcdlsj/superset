@@ -61,10 +61,11 @@ export async function POST(request: Request): Promise<Response> {
 			timezone: automation.timezone,
 			after: automation.nextRunAt,
 		}),
+		terminalDispatchToken: new Date(automation.updatedAt.getTime() + 1),
 	}));
 
 	await qstash.batchJSON(
-		dueWithNext.map(({ automation, next }) => {
+		dueWithNext.map(({ automation, next, terminalDispatchToken }) => {
 			const scheduledFor = bucketToMinute(automation.nextRunAt);
 			return {
 				url: `${env.NEXT_PUBLIC_API_URL}/api/automations/dispatch/${automation.id}`,
@@ -72,6 +73,8 @@ export async function POST(request: Request): Promise<Response> {
 					automationId: automation.id,
 					scheduledFor: scheduledFor.toISOString(),
 					terminal: next === null,
+					terminalDispatchToken:
+						next === null ? terminalDispatchToken.toISOString() : undefined,
 				},
 				deduplicationId: `${automation.id}_${scheduledFor.getTime()}`,
 				retries: 2,
@@ -81,11 +84,22 @@ export async function POST(request: Request): Promise<Response> {
 	);
 
 	const advanceResults = await Promise.allSettled(
-		dueWithNext.map(({ automation, next }) => {
-			// Leave the final occurrence enabled until its queued dispatch has
-			// either produced an outcome or the failure callback records delivery
-			// failure. That keeps a user pause distinguishable from exhaustion.
-			if (!next) return Promise.resolve();
+		dueWithNext.map(({ automation, next, terminalDispatchToken }) => {
+			if (!next) {
+				// The signed token distinguishes this evaluator-owned disable from a
+				// user pause that happens after the message is enqueued. The CAS also
+				// prevents a pause or schedule edit from being overwritten here.
+				return dbWs
+					.update(automations)
+					.set({ enabled: false, updatedAt: terminalDispatchToken })
+					.where(
+						and(
+							eq(automations.id, automation.id),
+							eq(automations.enabled, true),
+							eq(automations.nextRunAt, automation.nextRunAt),
+						),
+					);
+			}
 
 			return dbWs
 				.update(automations)
