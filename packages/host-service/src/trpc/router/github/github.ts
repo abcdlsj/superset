@@ -1,5 +1,29 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../../index";
+
+const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
+type MergeMethod = (typeof MERGE_METHODS)[number];
+
+interface RepositoryMergeCapabilities {
+	allow_merge_commit?: boolean | null;
+	allow_rebase_merge?: boolean | null;
+	allow_squash_merge?: boolean | null;
+}
+
+function isMergeMethodDisabled(
+	repository: RepositoryMergeCapabilities | null,
+	mergeMethod: MergeMethod,
+): boolean {
+	switch (mergeMethod) {
+		case "merge":
+			return repository?.allow_merge_commit === false;
+		case "squash":
+			return repository?.allow_squash_merge === false;
+		case "rebase":
+			return repository?.allow_rebase_merge === false;
+	}
+}
 
 const REPOSITORY_MERGE_SETTINGS_QUERY = `
 	query($owner: String!, $name: String!) {
@@ -110,7 +134,7 @@ export const githubRouter = router({
 				// The REST settings are still useful when GraphQL does not expose
 				// the viewer default (for example, with an older token scope).
 				console.warn(
-					"[github.getRepo] Failed to fetch viewer default merge method:",
+					`[github.getRepo] Failed to fetch viewer default merge method for ${input.owner}/${input.repo}:`,
 					error,
 				);
 			}
@@ -172,11 +196,34 @@ export const githubRouter = router({
 				owner: z.string(),
 				repo: z.string(),
 				pullNumber: z.number(),
-				mergeMethod: z.enum(["merge", "squash", "rebase"]).default("merge"),
+				mergeMethod: z.enum(MERGE_METHODS).default("merge"),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
 			const octokit = await ctx.github();
+			let repository: RepositoryMergeCapabilities | null = null;
+			try {
+				const result = await octokit.repos.get({
+					owner: input.owner,
+					repo: input.repo,
+				});
+				repository = result.data;
+			} catch (error) {
+				// Preserve the existing merge behavior when repository settings are
+				// unavailable. Explicitly disabled methods are still rejected below.
+				console.warn(
+					`[github.mergePR] Failed to fetch merge settings for ${input.owner}/${input.repo}; continuing:`,
+					error,
+				);
+			}
+
+			if (isMergeMethodDisabled(repository, input.mergeMethod)) {
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: `Repository ${input.owner}/${input.repo} does not allow ${input.mergeMethod} merges.`,
+				});
+			}
+
 			const { data } = await octokit.pulls.merge({
 				owner: input.owner,
 				repo: input.repo,
