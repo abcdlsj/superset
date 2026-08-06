@@ -67,6 +67,10 @@ describe("github router with mocked Octokit", () => {
 				};
 			},
 		},
+		graphql: async (_query: string, args: unknown) => {
+			calls.push({ method: "graphql", args });
+			return { repository: { viewerDefaultMergeMethod: "SQUASH" } };
+		},
 		users: {
 			getAuthenticated: async () => {
 				calls.push({ method: "users.getAuthenticated", args: {} });
@@ -141,7 +145,9 @@ describe("github router with mocked Octokit", () => {
 			repo: "hello",
 		});
 		expect(result.full_name).toBe("octocat/hello");
+		expect(result.viewerDefaultMergeMethod).toBe("SQUASH");
 		expect(calls[0].method).toBe("repos.get");
+		expect(calls[1].method).toBe("graphql");
 	});
 
 	test("listDeployments forwards filters to octokit", async () => {
