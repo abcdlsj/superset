@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 const scheduledFor = new Date("2026-08-06T18:46:00.000Z");
+const terminalPendingNextRunAt = "2126-08-06T18:46:00.000Z";
 const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
 const dispatchAutomation = mock(async () => ({
 	status: "dispatched" as const,
@@ -13,7 +14,6 @@ let automation = {
 	id: automationId,
 	enabled: true,
 	nextRunAt: scheduledFor,
-	updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 };
 
 mock.module("@/env", () => ({
@@ -90,7 +90,6 @@ describe("automations dispatch route", () => {
 			id: automationId,
 			enabled: true,
 			nextRunAt: scheduledFor,
-			updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 		};
 		updateValues.length = 0;
 		failFinalization = false;
@@ -158,17 +157,15 @@ describe("automations dispatch route", () => {
 		expect(dispatchAutomation).not.toHaveBeenCalled();
 	});
 
-	test("dispatches a terminal occurrence disabled by evaluate", async () => {
-		const terminalDispatchToken = "2026-08-06T18:00:00.001Z";
-		automation.enabled = false;
-		automation.updatedAt = new Date(terminalDispatchToken);
+	test("dispatches a terminal occurrence reserved by evaluate", async () => {
+		automation.nextRunAt = new Date(terminalPendingNextRunAt);
 
 		const response = await POST(
 			request({
 				automationId,
 				scheduledFor: scheduledFor.toISOString(),
 				terminal: true,
-				terminalDispatchToken,
+				terminalPendingNextRunAt,
 			}),
 			{ params },
 		);
@@ -186,13 +183,14 @@ describe("automations dispatch route", () => {
 
 	test("does not dispatch a terminal message after a user pause", async () => {
 		automation.enabled = false;
+		automation.nextRunAt = new Date(terminalPendingNextRunAt);
 
 		const response = await POST(
 			request({
 				automationId,
 				scheduledFor: scheduledFor.toISOString(),
 				terminal: true,
-				terminalDispatchToken: "2026-08-06T18:00:00.001Z",
+				terminalPendingNextRunAt,
 			}),
 			{ params },
 		);
@@ -215,6 +213,26 @@ describe("automations dispatch route", () => {
 		);
 
 		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			ok: true,
+			skipped: "stale",
+		});
+		expect(dispatchAutomation).not.toHaveBeenCalled();
+	});
+
+	test("skips a terminal message for a different reservation", async () => {
+		automation.nextRunAt = new Date("2126-08-07T18:46:00.000Z");
+
+		const response = await POST(
+			request({
+				automationId,
+				scheduledFor: scheduledFor.toISOString(),
+				terminal: true,
+				terminalPendingNextRunAt,
+			}),
+			{ params },
+		);
+
 		expect(await response.json()).toEqual({
 			ok: true,
 			skipped: "stale",

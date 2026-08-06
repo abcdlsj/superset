@@ -3,6 +3,9 @@ import { beforeEach, expect, mock, test } from "bun:test";
 const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
 const terminalOccurrence = new Date("2026-08-06T18:46:30.000Z");
 const scheduledFor = new Date("2026-08-06T18:46:00.000Z");
+const terminalPendingNextRunAt = new Date(
+	terminalOccurrence.getTime() + 100 * 365 * 24 * 60 * 60 * 1000,
+);
 const insertValues: unknown[] = [];
 const updateValues: unknown[] = [];
 
@@ -10,7 +13,7 @@ const automation = {
 	organizationId: "3ee200f3-c54c-46b1-b8b8-24a7f27348f3",
 	name: "Nightly automation",
 	enabled: true,
-	nextRunAt: terminalOccurrence,
+	nextRunAt: terminalPendingNextRunAt,
 };
 
 beforeEach(() => {
@@ -91,6 +94,7 @@ test("records a terminal delivery failure and closes the recurrence", async () =
 			automationId,
 			scheduledFor: scheduledFor.toISOString(),
 			terminal: true,
+			terminalPendingNextRunAt: terminalPendingNextRunAt.toISOString(),
 		}),
 	).toString("base64");
 	const request = new Request(
