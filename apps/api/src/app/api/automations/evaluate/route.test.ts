@@ -39,6 +39,11 @@ mock.module("@superset/db/schema", () => ({
 		enabled: "enabled",
 		nextRunAt: "nextRunAt",
 	},
+	automationRuns: {
+		automationId: "automationId",
+		organizationId: "organizationId",
+		scheduledFor: "scheduledFor",
+	},
 }));
 
 mock.module("@superset/db/client", () => ({
@@ -111,7 +116,7 @@ describe("automations evaluate route", () => {
 			).toISOString(),
 			terminal: true,
 		});
-		expect(updateValues).toEqual([{ enabled: false }]);
+		expect(updateValues).toEqual([]);
 	});
 
 	test("keeps the existing non-terminal advance path", async () => {

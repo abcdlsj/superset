@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { dbWs } from "@superset/db/client";
 import { automationRuns, automations } from "@superset/db/schema";
 import { Receiver } from "@upstash/qstash";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { env } from "@/env";
@@ -25,6 +25,7 @@ const failurePayloadSchema = z.object({
 const sourceBodySchema = z.object({
 	automationId: z.string().uuid(),
 	scheduledFor: z.string().datetime(),
+	terminal: z.boolean().default(false),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -78,6 +79,8 @@ export async function POST(request: Request): Promise<Response> {
 		.select({
 			organizationId: automations.organizationId,
 			name: automations.name,
+			enabled: automations.enabled,
+			nextRunAt: automations.nextRunAt,
 		})
 		.from(automations)
 		.where(eq(automations.id, automationId))
@@ -104,6 +107,24 @@ export async function POST(request: Request): Promise<Response> {
 			set: { status: "dispatch_failed", error: errorText },
 		});
 
+	if (
+		source.data.terminal &&
+		automation.enabled &&
+		bucketToMinute(automation.nextRunAt).getTime() ===
+			bucketToMinute(new Date(scheduledFor)).getTime()
+	) {
+		await dbWs
+			.update(automations)
+			.set({ enabled: false })
+			.where(
+				and(
+					eq(automations.id, automationId),
+					eq(automations.enabled, true),
+					eq(automations.nextRunAt, automation.nextRunAt),
+				),
+			);
+	}
+
 	Sentry.captureException(
 		new Error(`automation dispatch failed: ${automationId}`),
 		{
@@ -118,4 +139,10 @@ export async function POST(request: Request): Promise<Response> {
 	);
 
 	return Response.json({ ok: true });
+}
+
+function bucketToMinute(date: Date): Date {
+	const copy = new Date(date.getTime());
+	copy.setUTCSeconds(0, 0);
+	return copy;
 }

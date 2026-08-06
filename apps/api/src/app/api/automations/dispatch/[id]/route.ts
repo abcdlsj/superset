@@ -2,7 +2,7 @@ import { dbWs } from "@superset/db/client";
 import { automations } from "@superset/db/schema";
 import { dispatchAutomation } from "@superset/trpc/automation-dispatch";
 import { Receiver } from "@upstash/qstash";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { env } from "@/env";
@@ -18,9 +18,8 @@ const receiver = new Receiver({
 const payloadSchema = z.object({
 	automationId: z.string().uuid(),
 	scheduledFor: z.string().datetime(),
-	// The evaluator disables an automation as soon as it enqueues its final
-	// occurrence. Keep that provenance in the signed message so this handler
-	// can distinguish recurrence exhaustion from a user-paused automation.
+	// Keep terminal provenance in the signed message so this handler can
+	// finalize recurrence exhaustion after the dispatch attempt.
 	terminal: z.boolean().default(false),
 });
 
@@ -61,7 +60,7 @@ export async function POST(
 	}
 
 	const scheduledFor = new Date(parsed.data.scheduledFor);
-	if (!automation.enabled && !parsed.data.terminal) {
+	if (!automation.enabled) {
 		return Response.json({ ok: true, skipped: "disabled" });
 	}
 	if (
@@ -78,7 +77,37 @@ export async function POST(
 		relayUrl: env.RELAY_URL,
 	});
 
+	if (parsed.data.terminal) {
+		try {
+			await finalizeTerminalAutomation(automation.id, automation.nextRunAt);
+		} catch (error) {
+			// The dispatch outcome is already observable. Keep the message a 2xx
+			// so QStash does not turn a successful run into a failure on retry;
+			// the next evaluation or delivery can retry this state transition.
+			console.error(
+				"[automations/dispatch] failed to finalize terminal automation",
+				{ automationId: automation.id, error },
+			);
+		}
+	}
+
 	return Response.json({ ok: true, outcome });
+}
+
+async function finalizeTerminalAutomation(
+	automationId: string,
+	nextRunAt: Date,
+): Promise<void> {
+	await dbWs
+		.update(automations)
+		.set({ enabled: false })
+		.where(
+			and(
+				eq(automations.id, automationId),
+				eq(automations.enabled, true),
+				eq(automations.nextRunAt, nextRunAt),
+			),
+		);
 }
 
 function bucketToMinute(date: Date): Date {
