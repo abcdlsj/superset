@@ -4,11 +4,11 @@ import { nextOccurrenceAfter } from "@superset/shared/rrule";
 const terminalOccurrence = new Date(Date.now() - 60_000);
 const nonTerminalOccurrence = new Date(Date.now() - 86_400_000);
 const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
+const terminalPendingOffsetMs = 100 * 365 * 24 * 60 * 60 * 1000;
 
 let dueAutomations: Array<{
 	id: string;
 	nextRunAt: Date;
-	updatedAt: Date;
 	rrule: string;
 	dtstart: Date;
 	timezone: string;
@@ -97,7 +97,6 @@ describe("automations evaluate route", () => {
 			{
 				id: automationId,
 				nextRunAt: terminalOccurrence,
-				updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 				rrule: "FREQ=DAILY;COUNT=1",
 				dtstart: terminalOccurrence,
 				timezone: "UTC",
@@ -117,12 +116,15 @@ describe("automations evaluate route", () => {
 				Math.floor(terminalOccurrence.getTime() / 60_000) * 60_000,
 			).toISOString(),
 			terminal: true,
-			terminalDispatchToken: "2026-08-06T18:00:00.001Z",
+			terminalPendingNextRunAt: new Date(
+				terminalOccurrence.getTime() + terminalPendingOffsetMs,
+			).toISOString(),
 		});
 		expect(updateValues).toEqual([
 			{
-				enabled: false,
-				updatedAt: new Date("2026-08-06T18:00:00.001Z"),
+				nextRunAt: new Date(
+					terminalOccurrence.getTime() + terminalPendingOffsetMs,
+				),
 			},
 		]);
 	});
@@ -132,7 +134,6 @@ describe("automations evaluate route", () => {
 			{
 				id: automationId,
 				nextRunAt: nonTerminalOccurrence,
-				updatedAt: new Date("2026-08-06T18:00:00.000Z"),
 				rrule: "FREQ=DAILY",
 				dtstart: nonTerminalOccurrence,
 				timezone: "UTC",

@@ -26,6 +26,7 @@ const sourceBodySchema = z.object({
 	automationId: z.string().uuid(),
 	scheduledFor: z.string().datetime(),
 	terminal: z.boolean().default(false),
+	terminalPendingNextRunAt: z.string().datetime().optional(),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -113,8 +114,11 @@ export async function POST(request: Request): Promise<Response> {
 	if (
 		source.data.terminal &&
 		automation.enabled &&
-		bucketToMinute(automation.nextRunAt).getTime() ===
-			bucketToMinute(new Date(scheduledFor)).getTime()
+		matchesTerminalOccurrence({
+			nextRunAt: automation.nextRunAt,
+			scheduledFor: new Date(scheduledFor),
+			pendingNextRunAt: source.data.terminalPendingNextRunAt,
+		})
 	) {
 		await dbWs
 			.update(automations)
@@ -148,4 +152,26 @@ function bucketToMinute(date: Date): Date {
 	const copy = new Date(date.getTime());
 	copy.setUTCSeconds(0, 0);
 	return copy;
+}
+
+function matchesTerminalOccurrence({
+	nextRunAt,
+	scheduledFor,
+	pendingNextRunAt,
+}: {
+	nextRunAt: Date;
+	scheduledFor: Date;
+	pendingNextRunAt?: string;
+}): boolean {
+	if (
+		pendingNextRunAt !== undefined &&
+		nextRunAt.getTime() === new Date(pendingNextRunAt).getTime()
+	) {
+		return true;
+	}
+
+	return (
+		bucketToMinute(nextRunAt).getTime() ===
+		bucketToMinute(scheduledFor).getTime()
+	);
 }

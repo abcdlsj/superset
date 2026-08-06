@@ -18,6 +18,13 @@ const receiver = new Receiver({
 });
 
 const BATCH_SIZE = 2000;
+// Keep the reservation occurrence-specific so a delayed message cannot claim
+// a later terminal occurrence for the same automation.
+const TERMINAL_PENDING_OFFSET_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+
+function reserveTerminalNextRunAt(occurrenceAt: Date): Date {
+	return new Date(occurrenceAt.getTime() + TERMINAL_PENDING_OFFSET_MS);
+}
 
 function bucketToMinute(d: Date): Date {
 	const copy = new Date(d.getTime());
@@ -53,19 +60,25 @@ export async function POST(request: Request): Promise<Response> {
 		return Response.json({ enqueued: 0 });
 	}
 
-	const dueWithNext = due.map((automation) => ({
-		automation,
-		next: nextOccurrenceAfter({
+	const dueWithNext = due.map((automation) => {
+		const next = nextOccurrenceAfter({
 			rrule: automation.rrule,
 			dtstart: automation.dtstart,
 			timezone: automation.timezone,
 			after: automation.nextRunAt,
-		}),
-		terminalDispatchToken: new Date(automation.updatedAt.getTime() + 1),
-	}));
+		});
+		return {
+			automation,
+			next,
+			terminalPendingNextRunAt:
+				next === null
+					? reserveTerminalNextRunAt(automation.nextRunAt)
+					: undefined,
+		};
+	});
 
 	await qstash.batchJSON(
-		dueWithNext.map(({ automation, next, terminalDispatchToken }) => {
+		dueWithNext.map(({ automation, next, terminalPendingNextRunAt }) => {
 			const scheduledFor = bucketToMinute(automation.nextRunAt);
 			return {
 				url: `${env.NEXT_PUBLIC_API_URL}/api/automations/dispatch/${automation.id}`,
@@ -73,8 +86,7 @@ export async function POST(request: Request): Promise<Response> {
 					automationId: automation.id,
 					scheduledFor: scheduledFor.toISOString(),
 					terminal: next === null,
-					terminalDispatchToken:
-						next === null ? terminalDispatchToken.toISOString() : undefined,
+					terminalPendingNextRunAt: terminalPendingNextRunAt?.toISOString(),
 				},
 				deduplicationId: `${automation.id}_${scheduledFor.getTime()}`,
 				retries: 2,
@@ -84,14 +96,14 @@ export async function POST(request: Request): Promise<Response> {
 	);
 
 	const advanceResults = await Promise.allSettled(
-		dueWithNext.map(({ automation, next, terminalDispatchToken }) => {
+		dueWithNext.map(({ automation, next }) => {
 			if (!next) {
-				// The signed token distinguishes this evaluator-owned disable from a
-				// user pause that happens after the message is enqueued. The CAS also
-				// prevents a pause or schedule edit from being overwritten here.
+				// Move the terminal occurrence out of the due window while its signed
+				// QStash message is pending. The CAS prevents a pause or schedule edit
+				// from being overwritten here.
 				return dbWs
 					.update(automations)
-					.set({ enabled: false, updatedAt: terminalDispatchToken })
+					.set({ nextRunAt: reserveTerminalNextRunAt(automation.nextRunAt) })
 					.where(
 						and(
 							eq(automations.id, automation.id),

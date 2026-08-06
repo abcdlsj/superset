@@ -21,7 +21,7 @@ const payloadSchema = z.object({
 	// Keep terminal provenance in the signed message so this handler can
 	// finalize recurrence exhaustion after the dispatch attempt.
 	terminal: z.boolean().default(false),
-	terminalDispatchToken: z.string().datetime().optional(),
+	terminalPendingNextRunAt: z.string().datetime().optional(),
 });
 
 export async function POST(
@@ -62,22 +62,15 @@ export async function POST(
 
 	const scheduledFor = new Date(parsed.data.scheduledFor);
 	if (!automation.enabled) {
-		// evaluate writes the signed token into updated_at when it disables a
-		// terminal recurrence. A later user update changes updated_at, so a
-		// paused automation cannot be mistaken for evaluator-owned exhaustion.
-		const evaluatorDisabled =
-			parsed.data.terminal &&
-			parsed.data.terminalDispatchToken !== undefined &&
-			automation.updatedAt.getTime() ===
-				new Date(parsed.data.terminalDispatchToken).getTime();
-		if (!evaluatorDisabled) {
-			return Response.json({ ok: true, skipped: "disabled" });
-		}
+		return Response.json({ ok: true, skipped: "disabled" });
 	}
 	if (
 		parsed.data.terminal &&
-		bucketToMinute(automation.nextRunAt).getTime() !==
-			bucketToMinute(scheduledFor).getTime()
+		!matchesTerminalOccurrence({
+			nextRunAt: automation.nextRunAt,
+			scheduledFor,
+			pendingNextRunAt: parsed.data.terminalPendingNextRunAt,
+		})
 	) {
 		return Response.json({ ok: true, skipped: "stale" });
 	}
@@ -126,4 +119,26 @@ function bucketToMinute(date: Date): Date {
 	const copy = new Date(date.getTime());
 	copy.setUTCSeconds(0, 0);
 	return copy;
+}
+
+function matchesTerminalOccurrence({
+	nextRunAt,
+	scheduledFor,
+	pendingNextRunAt,
+}: {
+	nextRunAt: Date;
+	scheduledFor: Date;
+	pendingNextRunAt?: string;
+}): boolean {
+	if (
+		pendingNextRunAt !== undefined &&
+		nextRunAt.getTime() === new Date(pendingNextRunAt).getTime()
+	) {
+		return true;
+	}
+
+	return (
+		bucketToMinute(nextRunAt).getTime() ===
+		bucketToMinute(scheduledFor).getTime()
+	);
 }
