@@ -1,29 +1,12 @@
+import {
+	GITHUB_MERGE_METHODS,
+	type GitHubMergeCapabilities,
+	isGitHubMergeMethodDisabled,
+	normalizeGitHubRestMergeCapabilities,
+} from "@superset/shared/github-merge-methods";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../../index";
-
-const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
-type MergeMethod = (typeof MERGE_METHODS)[number];
-
-interface RepositoryMergeCapabilities {
-	allow_merge_commit?: boolean | null;
-	allow_rebase_merge?: boolean | null;
-	allow_squash_merge?: boolean | null;
-}
-
-function isMergeMethodDisabled(
-	repository: RepositoryMergeCapabilities | null,
-	mergeMethod: MergeMethod,
-): boolean {
-	switch (mergeMethod) {
-		case "merge":
-			return repository?.allow_merge_commit === false;
-		case "squash":
-			return repository?.allow_squash_merge === false;
-		case "rebase":
-			return repository?.allow_rebase_merge === false;
-	}
-}
 
 const REPOSITORY_MERGE_SETTINGS_QUERY = `
 	query($owner: String!, $name: String!) {
@@ -196,18 +179,18 @@ export const githubRouter = router({
 				owner: z.string(),
 				repo: z.string(),
 				pullNumber: z.number(),
-				mergeMethod: z.enum(MERGE_METHODS).default("merge"),
+				mergeMethod: z.enum(GITHUB_MERGE_METHODS).default("merge"),
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
 			const octokit = await ctx.github();
-			let repository: RepositoryMergeCapabilities | null = null;
+			let repository: GitHubMergeCapabilities | null = null;
 			try {
 				const result = await octokit.repos.get({
 					owner: input.owner,
 					repo: input.repo,
 				});
-				repository = result.data;
+				repository = normalizeGitHubRestMergeCapabilities(result.data);
 			} catch (error) {
 				// Preserve the existing merge behavior when repository settings are
 				// unavailable. Explicitly disabled methods are still rejected below.
@@ -217,7 +200,7 @@ export const githubRouter = router({
 				);
 			}
 
-			if (isMergeMethodDisabled(repository, input.mergeMethod)) {
+			if (isGitHubMergeMethodDisabled(repository, input.mergeMethod)) {
 				throw new TRPCError({
 					code: "BAD_REQUEST",
 					message: `Repository ${input.owner}/${input.repo} does not allow ${input.mergeMethod} merges.`,

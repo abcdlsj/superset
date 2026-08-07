@@ -1,3 +1,7 @@
+import {
+	GITHUB_MERGE_METHODS,
+	isGitHubMergeMethodDisabled,
+} from "@superset/shared/github-merge-methods";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { publicProcedure, router } from "../..";
@@ -313,22 +317,15 @@ export const createGitOperationsRouter = () => {
 			.input(
 				z.object({
 					worktreePath: z.string(),
-					strategy: z.enum(["merge", "squash", "rebase"]).default("squash"),
+					strategy: z.enum(GITHUB_MERGE_METHODS).default("squash"),
 				}),
 			)
 			.mutation(
 				async ({ input }): Promise<{ success: boolean; mergedAt?: string }> => {
 					assertRegisteredWorktree(input.worktreePath);
 					const mergeSettings = await getRepoMergeSettings(input.worktreePath);
-					const methodDisabled =
-						(input.strategy === "merge" &&
-							mergeSettings?.allowMergeCommit === false) ||
-						(input.strategy === "squash" &&
-							mergeSettings?.allowSquashMerge === false) ||
-						(input.strategy === "rebase" &&
-							mergeSettings?.allowRebaseMerge === false);
 
-					if (methodDisabled) {
+					if (isGitHubMergeMethodDisabled(mergeSettings, input.strategy)) {
 						throw new TRPCError({
 							code: "BAD_REQUEST",
 							message: `Repository merge settings do not allow ${input.strategy} merges.`,

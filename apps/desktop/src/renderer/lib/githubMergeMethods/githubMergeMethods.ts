@@ -1,11 +1,15 @@
-export const MERGE_METHODS = ["squash", "merge", "rebase"] as const;
+import {
+	GITHUB_MERGE_METHODS,
+	type GitHubMergeCapabilities,
+	type GitHubMergeMethod,
+	isGitHubMergeMethodDisabled,
+} from "@superset/shared/github-merge-methods";
 
-export type MergeMethod = (typeof MERGE_METHODS)[number];
+export const MERGE_METHODS = GITHUB_MERGE_METHODS;
 
-export interface GitHubMergeSettings {
-	allowMergeCommit?: boolean | null;
-	allowRebaseMerge?: boolean | null;
-	allowSquashMerge?: boolean | null;
+export type MergeMethod = GitHubMergeMethod;
+
+export interface GitHubMergeSettings extends GitHubMergeCapabilities {
 	viewerDefaultMergeMethod?: string | null;
 }
 
@@ -53,16 +57,7 @@ export function getAvailableMergeMethods(
 	}
 
 	const availableMethods = MERGE_METHODS.filter((method) => {
-		switch (method) {
-			case "merge":
-				return settings.allowMergeCommit;
-			case "rebase":
-				return settings.allowRebaseMerge;
-			case "squash":
-				return settings.allowSquashMerge;
-			default:
-				return false;
-		}
+		return !isGitHubMergeMethodDisabled(settings, method);
 	});
 	const defaultMethod = normalizeMergeMethod(settings.viewerDefaultMergeMethod);
 
