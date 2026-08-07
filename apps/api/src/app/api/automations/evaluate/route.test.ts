@@ -1,10 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 import { nextOccurrenceAfter } from "@superset/shared/rrule";
 
-const terminalOccurrence = new Date(Date.now() - 60_000);
-const nonTerminalOccurrence = new Date(Date.now() - 86_400_000);
+const terminalOccurrence = new Date("2026-08-06T18:46:30.000Z");
+const nonTerminalOccurrence = new Date("2026-08-05T18:46:30.000Z");
+const terminalUpdatedAt = new Date("2026-08-01T00:00:00.000Z");
+const nonTerminalUpdatedAt = new Date("2026-08-01T00:00:00.000Z");
 const automationId = "75c82d06-77af-454c-9f0c-e6c617ea702b";
-const terminalPendingOffsetMs = 100 * 365 * 24 * 60 * 60 * 1000;
+const terminalDispatchToken = new Date(terminalUpdatedAt.getTime() + 1);
 
 let dueAutomations: Array<{
 	id: string;
@@ -12,8 +14,10 @@ let dueAutomations: Array<{
 	rrule: string;
 	dtstart: Date;
 	timezone: string;
+	updatedAt: Date;
 }> = [];
 const updateValues: unknown[] = [];
+const updateWhereValues: unknown[] = [];
 const batchJSON = mock(async (_messages: unknown[]) => undefined);
 
 mock.module("@/env", () => ({
@@ -37,8 +41,10 @@ mock.module("@upstash/qstash", () => ({
 
 mock.module("@superset/db/schema", () => ({
 	automations: {
+		id: "id",
 		enabled: "enabled",
 		nextRunAt: "nextRunAt",
+		updatedAt: "updatedAt",
 	},
 	automationRuns: {
 		automationId: "automationId",
@@ -61,16 +67,21 @@ mock.module("@superset/db/client", () => ({
 		update: () => ({
 			set: (values: unknown) => {
 				updateValues.push(values);
-				return { where: async () => undefined };
+				return {
+					where: async (condition: unknown) => {
+						updateWhereValues.push(condition);
+						return undefined;
+					},
+				};
 			},
 		}),
 	},
 }));
 
 mock.module("drizzle-orm", () => ({
-	and: () => undefined,
-	eq: () => undefined,
-	lte: () => undefined,
+	and: (...conditions: unknown[]) => ({ type: "and", conditions }),
+	eq: (field: unknown, value: unknown) => ({ type: "eq", field, value }),
+	lte: (field: unknown, value: unknown) => ({ type: "lte", field, value }),
 }));
 
 const { POST } = await import("./route");
@@ -100,9 +111,11 @@ describe("automations evaluate route", () => {
 				rrule: "FREQ=DAILY;COUNT=1",
 				dtstart: terminalOccurrence,
 				timezone: "UTC",
+				updatedAt: terminalUpdatedAt,
 			},
 		];
 		updateValues.length = 0;
+		updateWhereValues.length = 0;
 		batchJSON.mockClear();
 
 		const response = await POST(request());
@@ -116,17 +129,24 @@ describe("automations evaluate route", () => {
 				Math.floor(terminalOccurrence.getTime() / 60_000) * 60_000,
 			).toISOString(),
 			terminal: true,
-			terminalPendingNextRunAt: new Date(
-				terminalOccurrence.getTime() + terminalPendingOffsetMs,
-			).toISOString(),
+			terminalDispatchToken: terminalDispatchToken.toISOString(),
+			terminalPreviousUpdatedAt: terminalUpdatedAt.toISOString(),
 		});
 		expect(updateValues).toEqual([
 			{
-				nextRunAt: new Date(
-					terminalOccurrence.getTime() + terminalPendingOffsetMs,
-				),
+				enabled: false,
+				updatedAt: terminalDispatchToken,
 			},
 		]);
+		expect(updateWhereValues[0]).toEqual({
+			type: "and",
+			conditions: [
+				{ type: "eq", field: "id", value: automationId },
+				{ type: "eq", field: "enabled", value: true },
+				{ type: "eq", field: "nextRunAt", value: terminalOccurrence },
+				{ type: "eq", field: "updatedAt", value: terminalUpdatedAt },
+			],
+		});
 	});
 
 	test("keeps the existing non-terminal advance path", async () => {
@@ -137,9 +157,11 @@ describe("automations evaluate route", () => {
 				rrule: "FREQ=DAILY",
 				dtstart: nonTerminalOccurrence,
 				timezone: "UTC",
+				updatedAt: nonTerminalUpdatedAt,
 			},
 		];
 		updateValues.length = 0;
+		updateWhereValues.length = 0;
 		batchJSON.mockClear();
 
 		const response = await POST(request());

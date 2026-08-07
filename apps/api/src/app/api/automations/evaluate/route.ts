@@ -5,6 +5,7 @@ import { Client, Receiver } from "@upstash/qstash";
 import { and, eq, lte } from "drizzle-orm";
 
 import { env } from "@/env";
+import { bucketToMinute } from "../terminal-occurrence";
 
 export const dynamic = "force-dynamic";
 
@@ -18,19 +19,6 @@ const receiver = new Receiver({
 });
 
 const BATCH_SIZE = 2000;
-// Keep the reservation occurrence-specific so a delayed message cannot claim
-// a later terminal occurrence for the same automation.
-const TERMINAL_PENDING_OFFSET_MS = 100 * 365 * 24 * 60 * 60 * 1000;
-
-function reserveTerminalNextRunAt(occurrenceAt: Date): Date {
-	return new Date(occurrenceAt.getTime() + TERMINAL_PENDING_OFFSET_MS);
-}
-
-function bucketToMinute(d: Date): Date {
-	const copy = new Date(d.getTime());
-	copy.setUTCSeconds(0, 0);
-	return copy;
-}
 
 export async function POST(request: Request): Promise<Response> {
 	const body = await request.text();
@@ -67,18 +55,17 @@ export async function POST(request: Request): Promise<Response> {
 			timezone: automation.timezone,
 			after: automation.nextRunAt,
 		});
+		const terminalDispatchToken =
+			next === null ? new Date(automation.updatedAt.getTime() + 1) : undefined;
 		return {
 			automation,
 			next,
-			terminalPendingNextRunAt:
-				next === null
-					? reserveTerminalNextRunAt(automation.nextRunAt)
-					: undefined,
+			terminalDispatchToken,
 		};
 	});
 
 	await qstash.batchJSON(
-		dueWithNext.map(({ automation, next, terminalPendingNextRunAt }) => {
+		dueWithNext.map(({ automation, next, terminalDispatchToken }) => {
 			const scheduledFor = bucketToMinute(automation.nextRunAt);
 			return {
 				url: `${env.NEXT_PUBLIC_API_URL}/api/automations/dispatch/${automation.id}`,
@@ -86,7 +73,9 @@ export async function POST(request: Request): Promise<Response> {
 					automationId: automation.id,
 					scheduledFor: scheduledFor.toISOString(),
 					terminal: next === null,
-					terminalPendingNextRunAt: terminalPendingNextRunAt?.toISOString(),
+					terminalDispatchToken: terminalDispatchToken?.toISOString(),
+					terminalPreviousUpdatedAt:
+						next === null ? automation.updatedAt.toISOString() : undefined,
 				},
 				deduplicationId: `${automation.id}_${scheduledFor.getTime()}`,
 				retries: 2,
@@ -96,19 +85,24 @@ export async function POST(request: Request): Promise<Response> {
 	);
 
 	const advanceResults = await Promise.allSettled(
-		dueWithNext.map(({ automation, next }) => {
+		dueWithNext.map(({ automation, next, terminalDispatchToken }) => {
 			if (!next) {
-				// Move the terminal occurrence out of the due window while its signed
-				// QStash message is pending. The CAS prevents a pause or schedule edit
-				// from being overwritten here.
+				if (!terminalDispatchToken) {
+					throw new Error("Missing terminal dispatch token");
+				}
+
+				// Keep nextRunAt as the real occurrence for API/UI consumers. The
+				// updatedAt token records that this disabled row belongs to the
+				// evaluator's queued terminal occurrence.
 				return dbWs
 					.update(automations)
-					.set({ nextRunAt: reserveTerminalNextRunAt(automation.nextRunAt) })
+					.set({ enabled: false, updatedAt: terminalDispatchToken })
 					.where(
 						and(
 							eq(automations.id, automation.id),
 							eq(automations.enabled, true),
 							eq(automations.nextRunAt, automation.nextRunAt),
+							eq(automations.updatedAt, automation.updatedAt),
 						),
 					);
 			}
