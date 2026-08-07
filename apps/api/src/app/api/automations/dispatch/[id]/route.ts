@@ -1,11 +1,15 @@
 import { dbWs } from "@superset/db/client";
-import { automations } from "@superset/db/schema";
+import { automations, type SelectAutomation } from "@superset/db/schema";
 import { dispatchAutomation } from "@superset/trpc/automation-dispatch";
 import { Receiver } from "@upstash/qstash";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { env } from "@/env";
+import {
+	matchesTerminalOccurrence,
+	matchesTerminalReservation,
+} from "../../terminal-occurrence";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -18,9 +22,12 @@ const receiver = new Receiver({
 const payloadSchema = z.object({
 	automationId: z.string().uuid(),
 	scheduledFor: z.string().datetime(),
-	// Keep terminal provenance in the signed message so this handler can
-	// finalize recurrence exhaustion after the dispatch attempt.
+	// The token identifies the evaluator's terminal reservation. The previous
+	// value lets dispatch claim an enabled row only if no edit won the race.
 	terminal: z.boolean().default(false),
+	terminalDispatchToken: z.string().datetime().optional(),
+	terminalPreviousUpdatedAt: z.string().datetime().optional(),
+	// Accept messages created before the updatedAt reservation was introduced.
 	terminalPendingNextRunAt: z.string().datetime().optional(),
 });
 
@@ -61,18 +68,38 @@ export async function POST(
 	}
 
 	const scheduledFor = new Date(parsed.data.scheduledFor);
-	if (!automation.enabled) {
+	if (parsed.data.terminal) {
+		const terminalReservation = matchesTerminalReservation({
+			updatedAt: automation.updatedAt,
+			terminalDispatchToken: parsed.data.terminalDispatchToken,
+		});
+		if (!automation.enabled && !terminalReservation) {
+			return Response.json({ ok: true, skipped: "disabled" });
+		}
+		if (
+			!matchesTerminalOccurrence({
+				nextRunAt: automation.nextRunAt,
+				scheduledFor,
+				legacyPendingNextRunAt: parsed.data.terminalPendingNextRunAt,
+			})
+		) {
+			return Response.json({ ok: true, skipped: "stale" });
+		}
+
+		const claimed = await claimTerminalOccurrence({
+			automation,
+			automationId: parsed.data.automationId,
+			terminalDispatchToken: parsed.data.terminalDispatchToken,
+			terminalPreviousUpdatedAt: parsed.data.terminalPreviousUpdatedAt,
+		});
+		if (!claimed) {
+			return Response.json({
+				ok: true,
+				skipped: automation.enabled ? "stale" : "disabled",
+			});
+		}
+	} else if (!automation.enabled) {
 		return Response.json({ ok: true, skipped: "disabled" });
-	}
-	if (
-		parsed.data.terminal &&
-		!matchesTerminalOccurrence({
-			nextRunAt: automation.nextRunAt,
-			scheduledFor,
-			pendingNextRunAt: parsed.data.terminalPendingNextRunAt,
-		})
-	) {
-		return Response.json({ ok: true, skipped: "stale" });
 	}
 
 	const outcome = await dispatchAutomation({
@@ -81,64 +108,88 @@ export async function POST(
 		relayUrl: env.RELAY_URL,
 	});
 
-	if (parsed.data.terminal) {
-		try {
-			await finalizeTerminalAutomation(automation.id, automation.nextRunAt);
-		} catch (error) {
-			console.error(
-				"[automations/dispatch] failed to finalize terminal automation",
-				{ automationId: automation.id, error },
-			);
-			// The dispatcher already recorded the outcome. Return non-2xx so
-			// QStash retries this idempotent finalization before acknowledging the
-			// message; run-failed preserves any already-terminal run outcome.
-			throw error;
-		}
+	if (parsed.data.terminal && outcome.status === "conflict") {
+		// A conflict can mean that another worker owns a still-dispatching run.
+		// Do not acknowledge the message or close the recurrence: QStash retries,
+		// then its failure callback records dispatch_failed if the owner never
+		// reaches a terminal run state.
+		return Response.json(
+			{
+				ok: false,
+				error: "Terminal automation dispatch is already in progress",
+			},
+			{ status: 409 },
+		);
 	}
 
 	return Response.json({ ok: true, outcome });
 }
 
-async function finalizeTerminalAutomation(
-	automationId: string,
-	nextRunAt: Date,
-): Promise<void> {
-	await dbWs
+async function claimTerminalOccurrence({
+	automation,
+	automationId,
+	terminalDispatchToken,
+	terminalPreviousUpdatedAt,
+}: {
+	automation: SelectAutomation;
+	automationId: string;
+	terminalDispatchToken?: string;
+	terminalPreviousUpdatedAt?: string;
+}): Promise<boolean> {
+	if (terminalDispatchToken !== undefined) {
+		if (terminalPreviousUpdatedAt === undefined) {
+			return false;
+		}
+
+		const token = new Date(terminalDispatchToken);
+		const previousUpdatedAt = new Date(terminalPreviousUpdatedAt);
+		const [claimed] = automation.enabled
+			? await dbWs
+					.update(automations)
+					.set({ enabled: false, updatedAt: token })
+					.where(
+						and(
+							eq(automations.id, automationId),
+							eq(automations.enabled, true),
+							eq(automations.nextRunAt, automation.nextRunAt),
+							eq(automations.updatedAt, previousUpdatedAt),
+						),
+					)
+					.returning({ id: automations.id })
+			: await dbWs
+					.update(automations)
+					.set({ updatedAt: token })
+					.where(
+						and(
+							eq(automations.id, automationId),
+							eq(automations.enabled, false),
+							eq(automations.nextRunAt, automation.nextRunAt),
+							eq(automations.updatedAt, token),
+						),
+					)
+					.returning({ id: automations.id });
+
+		return claimed !== undefined;
+	}
+
+	// Rolling-deployment compatibility for messages that carry only the old
+	// nextRunAt reservation. They may claim an enabled row, but never bypass a
+	// user-disabled row.
+	if (!automation.enabled) {
+		return false;
+	}
+
+	const [claimed] = await dbWs
 		.update(automations)
 		.set({ enabled: false })
 		.where(
 			and(
 				eq(automations.id, automationId),
 				eq(automations.enabled, true),
-				eq(automations.nextRunAt, nextRunAt),
+				eq(automations.nextRunAt, automation.nextRunAt),
 			),
-		);
-}
+		)
+		.returning({ id: automations.id });
 
-function bucketToMinute(date: Date): Date {
-	const copy = new Date(date.getTime());
-	copy.setUTCSeconds(0, 0);
-	return copy;
-}
-
-function matchesTerminalOccurrence({
-	nextRunAt,
-	scheduledFor,
-	pendingNextRunAt,
-}: {
-	nextRunAt: Date;
-	scheduledFor: Date;
-	pendingNextRunAt?: string;
-}): boolean {
-	if (
-		pendingNextRunAt !== undefined &&
-		nextRunAt.getTime() === new Date(pendingNextRunAt).getTime()
-	) {
-		return true;
-	}
-
-	return (
-		bucketToMinute(nextRunAt).getTime() ===
-		bucketToMinute(scheduledFor).getTime()
-	);
+	return claimed !== undefined;
 }
